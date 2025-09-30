@@ -58,7 +58,7 @@ export const authOptions: NextAuthOptions = {
       clientSecret: secrets.googleClientSecret,
       authorization: {
         params: {
-          scope: "openid email profile https://www.googleapis.com/auth/drive.readonly",
+          scope: "openid email profile https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.appdata",
           access_type: "offline",
           response_type: "code",
           prompt: "consent",
