@@ -3,7 +3,8 @@
 import NextAuth, { NextAuthOptions, Account } from "next-auth";
 import { JWT } from "next-auth/jwt";
 import GoogleProvider from "next-auth/providers/google";
-import { secrets } from "@/lib/secrets";
+
+// CHANGED: The import for 'secrets' is now completely removed.
 
 async function refreshAccessToken(token: JWT): Promise<JWT> {
   try {
@@ -12,8 +13,9 @@ async function refreshAccessToken(token: JWT): Promise<JWT> {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       method: "POST",
       body: new URLSearchParams({
-        client_id: secrets.googleClientId,
-        client_secret: secrets.googleClientSecret,
+        // CHANGED: Use process.env here
+        client_id: process.env.GOOGLE_CLIENT_ID as string,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET as string,
         grant_type: "refresh_token",
         refresh_token: token.refreshToken as string,
       }),
@@ -51,11 +53,11 @@ declare module "next-auth/jwt" {
 }
 
 export const authOptions: NextAuthOptions = {
-  secret: secrets.nextAuthSecret,
+  secret: process.env.NEXTAUTH_SECRET,
   providers: [
     GoogleProvider({
-      clientId: secrets.googleClientId,
-      clientSecret: secrets.googleClientSecret,
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
       authorization: {
         params: {
           scope: "openid email profile https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.appdata",
