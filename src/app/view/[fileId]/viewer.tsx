@@ -3,7 +3,8 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
-import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { useParams, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
@@ -22,7 +23,6 @@ export default function Viewer() {
 
     const { data: session } = useSession();
     const params = useParams();
-    const router = useRouter();
     const searchParams = useSearchParams();
     const fileId = params.fileId as string;
     const initialPage = parseInt(searchParams.get('page') || '1', 10);
@@ -86,9 +86,9 @@ export default function Viewer() {
     return (
         <div className="flex flex-col items-center min-h-screen bg-gray-900 text-white p-8">
             <div className="w-full max-w-5xl">
-                <button onClick={() => router.back()} className="mb-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
-                    &larr; Back to Library
-                </button>
+            <Link href="/" className="mb-4 inline-block bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
+                &larr; Back to Library
+            </Link>
                 <h1 className="text-2xl font-bold mb-4">{metadata?.name}</h1>
 
                 {isLoading && <p>Loading document...</p>}
