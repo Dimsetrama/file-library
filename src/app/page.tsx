@@ -1,103 +1,150 @@
-import Image from "next/image";
+// src/app/page.tsx
+
+'use client';
+
+import { useState, useEffect } from 'react';
+import { useSession } from 'next-auth/react';
+import AuthButton from '@/components/AuthButton';
+import * as pdfjs from 'pdfjs-dist';
+
+pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.mjs`;
+
+type DriveFile = {
+  id: string;
+  name: string;
+  mimeType: string;
+};
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const { data: session } = useSession();
+  const [files, setFiles] = useState<DriveFile[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isIndexing, setIsIndexing] = useState(false);
+  const [processingFile, setProcessingFile] = useState<string | null>(null);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+  const handleBuildIndex = async () => {
+    setIsIndexing(true);
+    alert('Starting to build the search index. This may take several minutes...');
+    try {
+        const response = await fetch('/api/drive/build-index', {
+            method: 'POST',
+        });
+        const result = await response.json();
+        alert(result.message);
+    } catch (error) {
+        console.error('Failed to build index:', error);
+        alert('Failed to build index. See console for details.');
+    }
+    setIsIndexing(false);
+  };
+
+  const handleProcessFile = async (file: DriveFile) => {
+    setProcessingFile(file.id);
+    console.log(`Processing file: ${file.name}...`);
+
+    try {
+      if (file.mimeType === 'application/pdf') {
+        const response = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`, {
+          headers: { 'Authorization': `Bearer ${session?.accessToken}` }
+        });
+        if (!response.ok) throw new Error('Failed to download file from Google Drive');
+        const arrayBuffer = await response.arrayBuffer();
+        const doc = await pdfjs.getDocument(arrayBuffer).promise;
+        let pdfText = "";
+        for (let i = 1; i <= doc.numPages; i++) {
+          const page = await doc.getPage(i);
+          const content = await page.getTextContent();
+          
+          // Using the more explicit loop to avoid the TypeScript error
+          const textItems: { str: string }[] = [];
+          content.items.forEach((item: unknown) => {
+            if (typeof item === 'object' && item !== null && 'str' in item) {
+              textItems.push(item as { str: string });
+            }
+          });
+          const pageText = textItems.map(item => item.str).join(" ");
+          pdfText += pageText + " ";
+        }
+        console.log(`--- Extracted Text for ${file.name} ---`);
+        console.log(pdfText);
+        alert(`Finished processing PDF! Check the console (F12) for the extracted text.`);
+      } else {
+        const res = await fetch(`/api/drive/process-file?fileId=${file.id}&mimeType=${file.mimeType}`);
+        if (!res.ok) throw new Error('Server failed to process file');
+        const data = await res.json();
+        console.log(`--- Extracted Text for ${file.name} ---`);
+        console.log(data.text);
+        alert(`Finished processing! Check the console (F12) for the extracted text.`);
+      }
+    } catch (error) {
+      console.error("Failed to process file:", error);
+      alert("Failed to process file. See console for details.");
+    }
+    setProcessingFile(null);
+  };
+  
+  useEffect(() => {
+    if (session) {
+      setIsLoading(true);
+      fetch('/api/drive/files')
+        .then((res) => res.json())
+        .then((data) => {
+          setFiles(data.files || []);
+          setIsLoading(false);
+        });
+    }
+  }, [session]);
+
+  return (
+    <main className="flex min-h-screen flex-col items-center p-24">
+      <div className="absolute top-5 right-5">
+        <AuthButton />
+      </div>
+
+      <div className="text-center w-full max-w-4xl">
+        <h1 className="text-4xl font-bold mb-8">Welcome to Your File Library</h1>
+        
+        {session && (
+            <div className="mb-8">
+                <button
+                    onClick={handleBuildIndex}
+                    disabled={isIndexing}
+                    className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded disabled:bg-gray-500"
+                >
+                    {isIndexing ? 'Indexing in Progress...' : 'Build Search Index'}
+                </button>
+                <p className="text-sm text-gray-400 mt-2">Click this to process all your files for searching.</p>
+            </div>
+        )}
+
+        {session ? (
+          <div>
+            <h2 className="text-2xl mb-4">Your Recent Google Drive Files:</h2>
+            {isLoading ? <p>Loading files...</p> : (
+              <ul className="text-left bg-gray-800 p-4 rounded-md">
+                {files.length > 0 ? (
+                  files.map((file) => (
+                    <li key={file.id} className="flex justify-between items-center border-b border-gray-700 py-2">
+                      <span>📄 {file.name}</span>
+                      <button
+                        onClick={() => handleProcessFile(file)}
+                        className="bg-blue-600 hover:bg-blue-700 text-white text-sm py-1 px-3 rounded"
+                        disabled={!!processingFile}
+                      >
+                        {processingFile === file.id ? 'Processing...' : 'Process'}
+                      </button>
+                    </li>
+                  ))
+                ) : (
+                  <p>No files found.</p>
+                )}
+              </ul>
+            )}
+          </div>
+        ) : (
+          <p>Please sign in to view your files.</p>
+        )}
+      </div>
+    </main>
   );
 }
