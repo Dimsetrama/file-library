@@ -22,6 +22,8 @@ export async function GET(req: NextRequest) {
     }
     const { searchParams } = new URL(req.url);
     const query = searchParams.get("q");
+    // ADDED: Get the requested page number
+    const page = parseInt(searchParams.get("page") || '1', 10);
     if (!query) {
         return new NextResponse("Query parameter 'q' is required", { status: 400 });
     }
@@ -41,36 +43,23 @@ export async function GET(req: NextRequest) {
 
         const fileRes = await drive.files.get({ fileId: indexFile.id, alt: 'media' });
         const searchIndex = fileRes.data as { [fileId: string]: IndexEntry };
-        
-        // DEBUG LOG: Let's see if the index is structured correctly
-        console.log("--- Loaded Search Index ---");
-        // console.log(searchIndex); // This might be too long, let's log keys instead
-        console.log("Indexed File IDs:", Object.keys(searchIndex));
-        console.log("--------------------------");
 
-
-        const results: { id: string, name: string, snippet: string, pageNumber: number }[] = [];
-        console.log(`\nSearching for: "${query}"`);
+        const allResults: { id: string, name: string, snippet: string, pageNumber: number }[] = [];
         for (const fileId in searchIndex) {
             const file = searchIndex[fileId];
-
             if (!Array.isArray(file.pages) || file.pages.length === 0) {
                 continue;
             }
-
             if (file.name.toLowerCase().includes(query.toLowerCase())) {
-                results.push({
+                allResults.push({
                     id: fileId, name: file.name,
                     pageNumber: 1, snippet: createSnippet(file.pages[0]?.content || "", query),
                 });
                 continue;
             }
             for (const page of file.pages) {
-                // DEBUG LOG: Check the content of each page
-                // console.log(`Checking Page ${page.pageNumber} of ${file.name}`);
                 if (page.content.toLowerCase().includes(query.toLowerCase())) {
-                    console.log(`   ---> Found a match in ${file.name} on page ${page.pageNumber}!`);
-                    results.push({
+                    allResults.push({
                         id: fileId, name: file.name,
                         pageNumber: page.pageNumber, snippet: createSnippet(page.content, query),
                     });
@@ -79,8 +68,14 @@ export async function GET(req: NextRequest) {
             }
         }
         
-        console.log(`Search complete. Found ${results.length} results.`);
-        return NextResponse.json({ results });
+        // ADDED: Pagination logic
+        const itemsPerPage = 10;
+        const totalPages = Math.ceil(allResults.length / itemsPerPage);
+        const startIndex = (page - 1) * itemsPerPage;
+        const endIndex = startIndex + itemsPerPage;
+        const paginatedResults = allResults.slice(startIndex, endIndex);
+
+        return NextResponse.json({ results: paginatedResults, totalPages: totalPages });
     } catch (error) {
         console.error("Error during search:", error);
         return new NextResponse("Internal Server Error", { status: 500 });

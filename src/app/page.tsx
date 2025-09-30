@@ -13,7 +13,7 @@ import Link from 'next/link';
 pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.mjs`;
 
 type DriveFile = { id: string; name: string; mimeType: string; };
-// CHANGED: SearchResult now includes a pageNumber
+// CHANGED: SearchResult now includes pageNumber
 type SearchResult = { id: string; name: string; snippet: string; pageNumber: number; };
 
 async function extractPptxText(buffer: ArrayBuffer): Promise<string> {
@@ -37,24 +37,37 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  
+  // ADDED: State for pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(0);
 
-  const handleSearch = async (e: FormEvent) => {
-    e.preventDefault();
+  // CHANGED: handleSearch is now split into two functions
+  const performSearch = async (page = 1) => {
     if (!searchQuery) return;
+
     setIsSearching(true);
+    setHasSearched(true); 
     setSearchResults([]);
+    setCurrentPage(page);
     try {
-        const response = await fetch(`/api/search?q=${encodeURIComponent(searchQuery)}`);
+        const response = await fetch(`/api/search?q=${encodeURIComponent(searchQuery)}&page=${page}`);
         const data = await response.json();
         console.log('Data received from search API:', data);
         setSearchResults(data.results || []);
+        setTotalPages(data.totalPages || 0); // Set total pages from API
     } catch (error) {
         console.error('Search failed:', error);
     }
     setIsSearching(false);
   };
 
-  // CHANGED: This entire function is updated to build the page-based index
+  const handleSearchSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    performSearch(1); // Always start a new search on page 1
+  };
+
   const handleBuildIndex = async () => {
     setIsIndexing(true);
     setIndexStatus('Step 1/3: Fetching file list...');
@@ -68,7 +81,7 @@ export default function Home() {
           return;
       }
 
-      setIndexStatus(`Step 2/3: Processing ${filesToIndex.length} files...`);
+      setIndexStatus(`Step 2/3: Processing ${filesToIndex.length} files... (This can take a while)`);
       const searchIndex: { [fileId: string]: { name: string, pages: {pageNumber: number, content: string}[] } } = {};
 
       for (const file of filesToIndex) {
@@ -164,7 +177,8 @@ export default function Home() {
 
         {session && (
             <div className="w-full mb-12">
-                <form onSubmit={handleSearch}>
+                {/* CHANGED: The form now uses handleSearchSubmit */}
+                <form onSubmit={handleSearchSubmit}>
                     <input
                         type="search"
                         value={searchQuery}
@@ -175,25 +189,51 @@ export default function Home() {
                 </form>
 
                 {isSearching && <p className="mt-4">Searching...</p>}
+
+                            
+                {hasSearched && !isSearching && searchResults.length === 0 && (
+                    <div className="mt-6 text-gray-400">
+                        <p>No results found for {searchQuery}.</p>
+                    </div>
+                )}
                 
                 {searchResults.length > 0 && (
-                    <div className="mt-6 text-left">
-                        <h3 className="text-xl mb-2">Search Results:</h3>
-                        <ul className="bg-gray-800 p-4 rounded-md">
-                            {searchResults.map((result) => (
-                                // CHANGED: The link now includes the page number
-                                <Link href={`/view/${result.id}?page=${result.pageNumber}`} key={result.id}>
-                                    <li className="border-b border-gray-700 py-3 hover:bg-gray-700 transition-colors cursor-pointer">
-                                        <h4 className="font-bold">📄 {result.name}</h4>
-                                        <p 
-                                            className="text-sm text-gray-400 mt-1" 
-                                            dangerouslySetInnerHTML={{ __html: result.snippet.replace(new RegExp(searchQuery, "gi"), (match) => `<strong class="text-yellow-400">${match}</strong>`) }}
-                                        ></p>
-                                    </li>
-                                </Link>
-                            ))}
-                        </ul>
-                    </div>
+                  <div className="mt-6 text-left">
+                      <h3 className="text-xl mb-2">Search Results:</h3>
+                      <ul className="bg-gray-800 p-4 rounded-md">
+                          {searchResults.map((result) => (
+                              <Link 
+                                  href={`/view/${result.id}?page=${result.pageNumber}&query=${encodeURIComponent(searchQuery)}`} 
+                                  key={result.id}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                              >
+                                  <li className="border-b border-gray-700 py-3 hover:bg-gray-700 transition-colors cursor-pointer">
+                                      <h4 className="font-bold">📄 {result.name}</h4>
+                                      <p 
+                                          className="text-sm text-gray-400 mt-1" 
+                                          dangerouslySetInnerHTML={{ __html: result.snippet.replace(new RegExp(searchQuery, "gi"), (match) => `<strong class="text-yellow-400">${match}</strong>`) }}
+                                      ></p>
+                                  </li>
+                              </Link>
+                          ))}
+                      </ul>
+
+                      {/* ADDED: Pagination controls */}
+                      {totalPages > 1 && (
+                          <div className="flex justify-center items-center gap-2 mt-6">
+                              <button onClick={() => performSearch(currentPage - 1)} disabled={currentPage <= 1} className="px-3 py-1 bg-gray-700 rounded disabled:opacity-50">
+                                  &larr; Previous
+                              </button>
+                              <span className="text-gray-400">
+                                  Page {currentPage} of {totalPages}
+                              </span>
+                              <button onClick={() => performSearch(currentPage + 1)} disabled={currentPage >= totalPages} className="px-3 py-1 bg-gray-700 rounded disabled:opacity-50">
+                                  Next &rarr;
+                              </button>
+                          </div>
+                      )}
+                  </div>
                 )}
             </div>
         )}
