@@ -7,12 +7,7 @@ import { useSession } from 'next-auth/react';
 import AuthButton from '@/components/AuthButton';
 import Link from 'next/link';
 
-// NOTE: These imports are no longer needed on the homepage, but we can leave them
-import * as pdfjs from 'pdfjs-dist';
-import mammoth from 'mammoth';
-import JSZip from 'jszip';
-
-pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.mjs`;
+// All heavy libraries are now imported dynamically inside the function that uses them.
 
 type DriveFile = {
   id: string;
@@ -22,18 +17,6 @@ type DriveFile = {
   size?: string;
 };
 type SearchResult = { id: string; name: string; snippet: string; pageNumber: number; };
-
-async function extractPptxText(buffer: ArrayBuffer): Promise<string> {
-    const zip = await JSZip.loadAsync(buffer);
-    const slideFiles = Object.keys(zip.files).filter(f => f.startsWith("ppt/slides/") && f.endsWith(".xml"));
-    let fullText = "";
-    for (const slideFile of slideFiles) {
-        const content = await zip.files[slideFile].async("string");
-        const textNodes = content.match(/>(.*?)</g) || [];
-        fullText += textNodes.map(node => node.replace(/>|</g, "")).join(" ");
-    }
-    return fullText;
-}
 
 export default function Home() {
   const { data: session } = useSession();
@@ -46,7 +29,6 @@ export default function Home() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
 
-  // State for the recent files list
   const [recentFiles, setRecentFiles] = useState<DriveFile[]>([]);
   const [isRecentFilesLoading, setIsRecentFilesLoading] = useState(false);
   const [recentFilesSearch, setRecentFilesSearch] = useState('');
@@ -75,15 +57,32 @@ export default function Home() {
     performSearch(1);
   };
 
-const handleBuildIndex = async () => {
+  const handleBuildIndex = async () => {
     setIsIndexing(true);
-    setIndexStatus('Step 1/3: Fetching all files from Google Drive...');
+    setIndexStatus('Step 1/3: Fetching all files...');
     try {
-      // CHANGED: This now calls our new API endpoint
+      // Dynamically import heavy libraries only when this function is called
+      const pdfjs = await import('pdfjs-dist');
+      const mammoth = (await import('mammoth')).default;
+      const JSZip = (await import('jszip')).default;
+
+      pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.mjs`;
+
+      async function extractPptxText(buffer: ArrayBuffer): Promise<string> {
+        const zip = await JSZip.loadAsync(buffer);
+        const slideFiles = Object.keys(zip.files).filter(f => f.startsWith("ppt/slides/") && f.endsWith(".xml"));
+        let fullText = "";
+        for (const slideFile of slideFiles) {
+            const content = await zip.files[slideFile].async("string");
+            const textNodes = content.match(/>(.*?)</g) || [];
+            fullText += textNodes.map(node => node.replace(/>|</g, "")).join(" ");
+        }
+        return fullText;
+      }
+
       const listRes = await fetch('/api/drive/get-all-files');
       const fileListData = await listRes.json();
       const filesToIndex: DriveFile[] = fileListData.files || [];
-      
       if (filesToIndex.length === 0) {
           setIndexStatus('No files found to index.');
           setIsIndexing(false);
@@ -106,9 +105,11 @@ const handleBuildIndex = async () => {
 
             if (file.mimeType === 'application/pdf') {
                 const doc = await pdfjs.getDocument(arrayBuffer).promise;
-                for (let i = 1; i <= doc.numPages; i++) {
+                      for (let i = 1; i <= doc.numPages; i++) {
                     const page = await doc.getPage(i);
                     const content = await page.getTextContent();
+                    
+                    // This explicit loop fixes the 'any' and 'str' property errors
                     const textItems: { str: string }[] = [];
                     content.items.forEach((item: unknown) => {
                         if (typeof item === 'object' && item !== null && 'str' in item) {
@@ -204,10 +205,8 @@ const handleBuildIndex = async () => {
       <div className="absolute top-5 right-5">
         <AuthButton />
       </div>
-
       <div className="text-center w-full max-w-4xl">
         <h1 className="text-4xl font-bold mb-8">Welcome to Your File Library</h1>
-        
         {session && (
             <div className="mb-8 p-4 border border-gray-700 rounded-lg">
                 <button
@@ -220,7 +219,6 @@ const handleBuildIndex = async () => {
                 <p className="text-sm text-gray-400 mt-2 h-4">{indexStatus}</p>
             </div>
         )}
-
         {session && (
             <div className="w-full mb-12">
                 <form onSubmit={handleSearchSubmit}>
@@ -232,15 +230,12 @@ const handleBuildIndex = async () => {
                         className="w-full px-4 py-2 text-lg text-white bg-gray-800 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                 </form>
-
                 {isSearching && <p className="mt-4">Searching...</p>}
-                
                 {hasSearched && !isSearching && searchResults.length === 0 && (
                     <div className="mt-6 text-gray-400">
-                        <p>No results found for &quot;{searchQuery}&quot;.</p>
+                        <p>No results found for &quot{searchQuery}&quot.</p>
                     </div>
                 )}
-                
                 {searchResults.length > 0 && (
                     <div className="mt-6 text-left">
                         <h3 className="text-xl mb-2">Search Results:</h3>
@@ -274,7 +269,6 @@ const handleBuildIndex = async () => {
                 )}
             </div>
         )}
-
         {session ? (
           <div>
             <div className="flex justify-between items-center mb-4">
@@ -290,7 +284,6 @@ const handleBuildIndex = async () => {
                 <button type="submit" className="px-3 py-1 text-sm bg-blue-600 rounded-md hover:bg-blue-700">Search</button>
               </form>
             </div>
-
             {isRecentFilesLoading ? <p>Loading files...</p> : (
               <ul className="text-left bg-gray-800 p-4 rounded-md">
                 {recentFiles.length > 0 ? (
@@ -306,7 +299,6 @@ const handleBuildIndex = async () => {
                 ) : ( <p className="text-center text-gray-400">No files found.</p> )}
               </ul>
             )}
-
             <div className="flex justify-center items-center gap-4 mt-4">
               <button 
                 onClick={() => fetchRecentFiles(recentFilesCurrentPage - 1)} 
