@@ -24,3 +24,84 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Explosion animation for the wiggling hamster */
+@keyframes explode {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(4.5); /* Makes it grow bigger */
+    opacity: 0; /* Fades out completely */
+    filter: brightness(8); /* Makes it glow as it explodes */
+  }
+}
+
+.animate-explode {
+  animation: explode 0.5s forwards ease-out; /* 0.5 seconds duration */
+}
+
+
+@keyframes squish-and-tremor {
+  0% {
+    transform: scale(1, 1) translateX(0);
+  }
+  15% {
+    /* Get really thin and wide */
+    transform: scale(1.4, 0.4);
+  }
+  30% {
+    /* Shake hard to the left */
+    transform: scale(1.4, 0.4) translateX(-15px);
+  }
+  45% {
+    /* Shake hard to the right */
+    transform: scale(1.4, 0.4) translateX(15px);
+  }
+  60% {
+    /* Shake hard back to the left */
+    transform: scale(1.4, 0.4) translateX(-15px);
+  }
+  75% {
+    /* Shake hard back to the right */
+    transform: scale(1.4, 0.4) translateX(15px);
+  }
+  90% {
+    /* "Pop" back up, slightly taller than normal */
+    transform: scale(0.9, 0.4);
+  }
+  100% {
+    /* Settle back to the normal state */
+    transform: scale(0.9, 0.2) translateX(0);
+  }
+}
+
+.animate-squish-tremor {
+  /* Make the animation 1.5 seconds long */
+  animation: squish-and-tremor 1s ease-in-out;
+}
+
+
+.speech-bubble {
+  /* Positioning for the bubble relative to the hamster */
+  position: absolute;
+  bottom: 110%;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap; /* Prevents the text from wrapping */
+  z-index: 100;
+}
+
+.speech-bubble::after {
+  /* This creates the little triangle at the bottom */
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 8px;
+  border-style: solid;
+  /* This color should match the bubble's background color */
+  border-color: #374151 transparent transparent transparent; /* This is Tailwind's gray-700 */
+}

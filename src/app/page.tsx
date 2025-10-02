@@ -6,6 +6,7 @@ import { useState, useEffect, FormEvent, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import AuthButton from '@/components/AuthButton';
 import Link from 'next/link';
+import Hamster from '@/components/Hamster';
 
 // All heavy libraries are now imported dynamically inside the function that uses them.
 
@@ -29,11 +30,23 @@ export default function Home() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
 
+  const [showWigglingHamster, setShowWigglingHamster] = useState(true);
+  const [isWigglingHamsterExploding, setIsWigglingHamsterExploding] = useState(false);
+  const [showRespawnHamster, setShowRespawnHamster] = useState(false);
+  const [isRespawnHamsterSquished, setIsRespawnHamsterSquished] = useState(false);
+
+  const [showPatMeBubble, setShowPatMeBubble] = useState(false);
+
   const [recentFiles, setRecentFiles] = useState<DriveFile[]>([]);
   const [isRecentFilesLoading, setIsRecentFilesLoading] = useState(false);
   const [recentFilesSearch, setRecentFilesSearch] = useState('');
   const [pageTokens, setPageTokens] = useState<(string | undefined)[]>([undefined]);
   const [recentFilesCurrentPage, setRecentFilesCurrentPage] = useState(1);
+
+// This tracks which hamster is active: the 'spinning' one or the 'dancing' one
+  const [activeHamster, setActiveHamster] = useState<'spinning' | 'dancing'>('spinning');
+  // This will control the fade animation
+  const [isHamsterVisible, setIsHamsterVisible] = useState(true);
 
   const performSearch = async (page = 1) => {
     if (!searchQuery) return;
@@ -152,6 +165,45 @@ export default function Home() {
     }
     setIsIndexing(false);
   };
+
+const handleHamsterClick = () => {
+    // Start the fade-out animation
+    setIsHamsterVisible(false);
+
+    // Wait for the animation to finish (300 milliseconds)
+    setTimeout(() => {
+      // Swap the active hamster
+      setActiveHamster(prev => prev === 'spinning' ? 'dancing' : 'spinning');
+      // Start the fade-in animation for the new hamster
+      setIsHamsterVisible(true);
+    }, 300);
+  };
+
+const handleWigglingHamsterClick = () => {
+    setIsWigglingHamsterExploding(true);
+    // After the explosion animation, hide it completely
+    setTimeout(() => {
+      setShowWigglingHamster(false);
+      setShowRespawnHamster(true);
+      setIsWigglingHamsterExploding(false); // Reset explosion state for potential re-spawn if you add that later
+    }, 500); // Match this duration to your CSS animation duration
+  };
+
+ const handleRespawnClick = () => {
+    // Prevent re-clicking while the animation is playing
+    if (isRespawnHamsterSquished) return;
+
+    // Start the squish animation
+    setIsRespawnHamsterSquished(true);
+
+    // Wait for the animation to finish (500ms) before swapping
+    setTimeout(() => {
+      setShowRespawnHamster(false);
+      setShowWigglingHamster(true);
+      setIsWigglingHamsterExploding(false); // Reset explosion state
+      setIsRespawnHamsterSquished(false); // Reset squish state
+    }, 1000); // This duration must match your CSS animation duration
+  };
   
   const fetchRecentFiles = useCallback((page: number) => {
     if (session) {
@@ -200,13 +252,43 @@ export default function Home() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
-  return (
-    <main className="flex min-h-screen flex-col items-center p-24">
-      <div className="absolute top-5 right-5">
-        <AuthButton />
-      </div>
+ return (
+    <div className="relative min-h-screen bg-black">
+      <main className="flex flex-col items-center p-24">
+        <div className="absolute top-5 right-5">
+          <AuthButton />
+        </div>
+
+
+
       <div className="text-center w-full max-w-4xl">
-        <h1 className="text-4xl font-bold mb-8">Welcome to Your File Library</h1>
+<h1 className="text-4xl font-bold mb-8 flex items-center justify-center gap-4">
+    {/* This new div will handle the hover and positioning */}
+    <div 
+        className="relative"
+        onMouseEnter={() => setShowPatMeBubble(true)}
+        onMouseLeave={() => setShowPatMeBubble(false)}
+    >
+        {/* The wiggling hamster code is now inside this div */}
+        {showWigglingHamster && (
+            <div 
+                onClick={handleWigglingHamsterClick} 
+                className={`cursor-pointer ${isWigglingHamsterExploding ? 'animate-explode' : ''}`}
+            >
+                <Hamster gif="wiggling" size={64} />
+            </div>
+        )}
+
+        {/* This is the new speech bubble. It only appears on hover. */}
+        {showPatMeBubble && (
+            <div className="speech-bubble bg-gray-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg">
+                PET ME!!!
+            </div>
+        )}
+    </div>
+    
+    Welcome to Etrama&apos;s Library
+</h1>
         {session && (
             <div className="mb-8 p-4 border border-gray-700 rounded-lg">
                 <button
@@ -319,6 +401,36 @@ export default function Home() {
           </div>
         ) : ( <p>Please sign in to view your files.</p> )}
       </div>
+
+
+
     </main>
-  );
-}
+
+    {/* This single block now handles both hamsters and the animation */}
+      <div 
+        onClick={handleHamsterClick}
+        className={`cursor-pointer fixed bottom-4 z-50 transition-all duration-300 ease-in-out ${
+          activeHamster === 'spinning' ? 'left-4' : 'right-4'
+        } ${
+          isHamsterVisible ? 'opacity-100 scale-100' : 'opacity-0 scale-50'
+        }`}
+      >
+        <Hamster 
+          gif={activeHamster}
+          size={80} 
+        />
+      </div>
+
+       {/* This hamster head will now be at the absolute bottom of all content */}
+{showRespawnHamster && (
+        <div 
+          onClick={handleRespawnClick} 
+          className={`cursor-pointer absolute bottom-4 z-20 left-1/2 -translate-x-1/2 ${
+            isRespawnHamsterSquished ? 'animate-squish-tremor' : ''
+          }`}
+        >
+          <Hamster gif="head" size={64} />
+        </div>
+      )}
+    </div>
+  );}

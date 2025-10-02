@@ -8,7 +8,7 @@ import Providers from './providers'; // <-- IMPORT
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'File Library',
+  title: "Etrama's Library",
   description: 'Your personal file library',
 };
 
