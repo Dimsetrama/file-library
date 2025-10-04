@@ -252,39 +252,46 @@ const checkIndexStatus = useCallback(async (driveFiles: DriveFile[]) => {
 
 checkIndexStatusRef.current = checkIndexStatus;
   
- // In src/app/page.tsx
+const fetchRecentFiles = useCallback(async (page: number) => {
+    if (!session) return;
 
-const fetchRecentFiles = useCallback((page: number) => {
-    if (session) {
-        setIsRecentFilesLoading(true);
-        setRecentFilesCurrentPage(page);
-        
-        const pageToken = pageTokens[page - 1];
-        const url = new URL('/api/drive/files', window.location.origin);
-        if (pageToken) url.searchParams.append('pageToken', pageToken);
-        if (recentFilesSearch) url.searchParams.append('q', recentFilesSearch);
-
-        fetch(url.toString())
-            .then(res => res.json())
-            .then(data => {
-    const files: DriveFile[] = data.files || [];
-    setRecentFiles(files);
+    setIsRecentFilesLoading(true);
+    setRecentFilesCurrentPage(page);
     
-    // This functional update guarantees we have the latest `prevTokens` array
-    setPageTokens(prevTokens => {
-        const newPageTokens = [...prevTokens.slice(0, page)];
-        if (data.nextPageToken) {
-            newPageTokens[page] = data.nextPageToken;
+    const pageToken = pageTokens[page - 1];
+    const url = new URL('/api/drive/files', window.location.origin);
+    if (pageToken) url.searchParams.append('pageToken', pageToken);
+    if (recentFilesSearch) url.searchParams.append('q', recentFilesSearch);
+
+    try {
+        const response = await fetch(url.toString());
+        if (!response.ok) {
+            throw new Error(`API responded with status: ${response.status}`);
         }
-        return newPageTokens;
-    });
-    
-    setIsRecentFilesLoading(false);
-    checkIndexStatus(files);
-});
+        
+        const data = await response.json();
+
+        // --- BROWSER LOG ---
+        console.log("--- BROWSER RECEIVED ---", data);
+
+        const files: DriveFile[] = data.files || [];
+        setRecentFiles(files);
+        
+        setPageTokens(prevTokens => {
+            const newPageTokens = [...prevTokens];
+            if (data.nextPageToken) {
+                newPageTokens[page] = data.nextPageToken;
+            }
+            return newPageTokens;
+        });
+        
+    } catch (error) {
+        // --- ERROR LOG ---
+        console.error("--- FETCH FAILED ---", error);
+    } finally {
+        setIsRecentFilesLoading(false);
     }
-// You must add checkIndexStatus to the dependency array
-}, [session, recentFilesSearch, pageTokens, checkIndexStatus]);
+}, [session, pageTokens, recentFilesSearch]); // <-- Simplified dependency array
 
   const handleRecentFilesSearchSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -315,6 +322,7 @@ useEffect(() => {
             fetch(url.toString())
                 .then(res => res.json())
                 .then(data => {
+                  console.log("--- BROWSER RECEIVED ---", data);
                     const files: DriveFile[] = data.files || [];
                     setRecentFiles(files);
                     setIsRecentFilesLoading(false);
@@ -507,7 +515,7 @@ useEffect(() => {
                 <span className="text-gray-400">Page {recentFilesCurrentPage}</span>
                 <button 
                   onClick={() => fetchRecentFiles(recentFilesCurrentPage + 1)} 
-                  disabled={!pageTokens[recentFilesCurrentPage] || isRecentFilesLoading} 
+                  disabled={isRecentFilesLoading || (recentFilesCurrentPage > 1 && !pageTokens[recentFilesCurrentPage])}
                   className="px-4 py-2 bg-gray-700 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Next →
