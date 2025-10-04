@@ -7,7 +7,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { Document, Page, pdfjs } from 'react-pdf';
 
 // ADD THIS ONE LINE INSTEAD
-import "react-pdf/dist/esm/Pdf.css";
+import 'pdfjs-dist/web/pdf_viewer.css'; // This is the stable, official path
 
 // Configure the worker from a reliable CDN
 pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.mjs`;
