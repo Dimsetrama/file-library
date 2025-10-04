@@ -14,6 +14,7 @@ type DriveFile = {
   mimeType: string;
   createdTime?: string;
   size?: string;
+  webViewLink?: string;
 };
 type SearchResult = { id: string; name: string; snippet: string; pageNumber: number; };
 type IndexStatusInfo = {
@@ -200,7 +201,7 @@ export default function Home() {
       setShowWigglingHamster(true);
       setIsWigglingHamsterExploding(false);
       setIsRespawnHamsterSquished(false);
-    }, 1500);
+    }, 1000);
   };
 // Define this above your other functions, near your useState declarations
 const checkIndexStatusRef = useRef<((driveFiles: DriveFile[]) => Promise<void>) | null>(null);
@@ -266,19 +267,21 @@ const fetchRecentFiles = useCallback((page: number) => {
         fetch(url.toString())
             .then(res => res.json())
             .then(data => {
-                const files: DriveFile[] = data.files || [];
-                setRecentFiles(files);
-                
-                const newPageTokens = [...pageTokens.slice(0, page)];
-                if (data.nextPageToken) {
-                    newPageTokens[page] = data.nextPageToken;
-                }
-                setPageTokens(newPageTokens);
-                setIsRecentFilesLoading(false);
-
-                // --- NEW: Call the check with the fresh file list ---
-                checkIndexStatus(files);
-            });
+    const files: DriveFile[] = data.files || [];
+    setRecentFiles(files);
+    
+    // This functional update guarantees we have the latest `prevTokens` array
+    setPageTokens(prevTokens => {
+        const newPageTokens = [...prevTokens.slice(0, page)];
+        if (data.nextPageToken) {
+            newPageTokens[page] = data.nextPageToken;
+        }
+        return newPageTokens;
+    });
+    
+    setIsRecentFilesLoading(false);
+    checkIndexStatus(files);
+});
     }
 // You must add checkIndexStatus to the dependency array
 }, [session, recentFilesSearch, pageTokens, checkIndexStatus]);
@@ -451,19 +454,47 @@ useEffect(() => {
                 </form>
               </div>
               {isRecentFilesLoading ? <p>Loading files...</p> : (
-                <ul className="text-left bg-gray-800 p-4 rounded-md">
-                  {recentFiles.length > 0 ? (
-                    recentFiles.map((file) => (
-                      <li key={file.id} className="grid grid-cols-1 md:grid-cols-3 items-center gap-4 border-b border-gray-700 py-3 last:border-b-0">
-                        <span className="md:col-span-2 truncate font-medium">📄 {file.name}</span>
-                        <div className="text-left md:text-right text-sm text-gray-400">
-                          <span>{formatFileSize(file.size)}</span>
-                          <span className="ml-4">{file.createdTime ? new Date(file.createdTime).toLocaleDateString() : ''}</span>
-                        </div>
-                      </li>
-                    ))
-                  ) : ( <p className="text-center text-gray-400">No files found.</p> )}
-                </ul>
+<ul className="text-left bg-gray-800 p-4 rounded-md">
+  {recentFiles.length > 0 ? (
+    recentFiles.map((file) => {
+      // Determine if the file can be opened inside your app
+      const isViewableInApp = file.mimeType === 'application/pdf';
+
+      // This variable holds the visual part of the file row to avoid repetition
+      const fileContent = (
+        <div className="grid grid-cols-1 md:grid-cols-3 items-center gap-4 w-full">
+          <span className="md:col-span-2 truncate font-medium">📄 {file.name}</span>
+          <div className="text-left md:text-right text-sm text-gray-400">
+            <span>{formatFileSize(file.size)}</span>
+            <span className="ml-4">{file.createdTime ? new Date(file.createdTime).toLocaleDateString() : ''}</span>
+          </div>
+        </div>
+      );
+
+      return (
+        <li key={file.id} className="border-b border-gray-700 last:border-b-0">
+          {/* This is the conditional logic */}
+            {isViewableInApp ? (
+              // If it's a PDF, link to your internal viewer page IN A NEW TAB
+              <Link 
+                href={`/view/${file.id}`} 
+                target="_blank" 
+                rel="noopener noreferrer" 
+                className="block py-3 px-2 hover:bg-gray-700 transition-colors"
+              >
+                {fileContent}
+              </Link>
+            ) : (
+            // For all other files, link to Google Drive in a new tab
+            <a href={file.webViewLink} target="_blank" rel="noopener noreferrer" className="block py-3 px-2 hover:bg-gray-700 transition-colors">
+              {fileContent}
+            </a>
+          )}
+        </li>
+      );
+    })
+  ) : ( <p className="text-center text-gray-400">No files found.</p> )}
+</ul>
               )}
               <div className="flex justify-center items-center gap-4 mt-4">
                 <button 
