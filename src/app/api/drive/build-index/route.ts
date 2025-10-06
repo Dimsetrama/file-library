@@ -6,9 +6,15 @@ import { authOptions } from "@/lib/auth";
 import { google } from "googleapis";
 import { Readable } from "stream";
 
-// @ts-expect-error: This is a safer version of @ts-ignore. It tells
-// TypeScript we expect an error on the next line, and it will complain if there isn't one.
-import pdfjs from "pdfjs-dist/legacy/build/pdf.js";
+// --- FIX 1: Polyfill for DOMMatrix ---
+// This creates a fake DOMMatrix class on the server, preventing pdf.js from crashing.
+if (typeof global.DOMMatrix === 'undefined') {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (global as any).DOMMatrix = class DOMMatrix {};
+}
+
+// --- FIX 2: Use the main import that Vercel can find ---
+import * as pdfjs from "pdfjs-dist";
 import mammoth from "mammoth";
 import JSZip from "jszip";
 
@@ -17,6 +23,7 @@ type DriveFile = { id: string; name: string; mimeType: string; };
 
 // Helper function to get the Google Drive service
 async function getDriveService() {
+    // ... (This function remains the same)
     const session = await getServerSession(authOptions);
     if (!session || !session.accessToken) {
         throw new Error("Unauthorized");
@@ -28,10 +35,12 @@ async function getDriveService() {
 
 export async function POST() {
     try {
-        // We must also use the legacy worker on the server
-        pdfjs.GlobalWorkerOptions.workerSrc = `pdfjs-dist/legacy/build/pdf.worker.js`;
+        // --- FIX 3: Point the worker to the correct non-legacy build ---
+        pdfjs.GlobalWorkerOptions.workerSrc = `pdfjs-dist/build/pdf.worker.mjs`;
 
         const drive = await getDriveService();
+
+        // ... (The rest of your code from here down remains exactly the same) ...
 
         // 1. Get a list of all file IDs from Google Drive
         const searchQuery = `(mimeType='application/pdf' or mimeType='application/vnd.openxmlformats-officedocument.wordprocessingml.document' or mimeType='application/vnd.openxmlformats-officedocument.presentationml.presentation') and trashed = false`;
