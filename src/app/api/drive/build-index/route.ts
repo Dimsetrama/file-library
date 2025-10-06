@@ -5,8 +5,10 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { google } from "googleapis";
 import { Readable } from "stream";
-// FIX 1: Use the main package entry for pdfjs-dist
-import * as pdfjs from "pdfjs-dist";
+
+// @ts-expect-error: This is a safer version of @ts-ignore. It tells
+// TypeScript we expect an error on the next line, and it will complain if there isn't one.
+import pdfjs from "pdfjs-dist/legacy/build/pdf.js";
 import mammoth from "mammoth";
 import JSZip from "jszip";
 
@@ -26,8 +28,8 @@ async function getDriveService() {
 
 export async function POST() {
     try {
-        // FIX 1 (continued): Configure the worker for a Node.js environment
-        pdfjs.GlobalWorkerOptions.workerSrc = `node_modules/pdfjs-dist/build/pdf.worker.mjs`;
+        // We must also use the legacy worker on the server
+        pdfjs.GlobalWorkerOptions.workerSrc = `pdfjs-dist/legacy/build/pdf.worker.js`;
 
         const drive = await getDriveService();
 
@@ -36,7 +38,7 @@ export async function POST() {
         const filesResponse = await drive.files.list({
             q: searchQuery,
             fields: 'files(id, name, mimeType)',
-            pageSize: 1000 // Fetch up to 1000 files
+            pageSize: 1000
         });
 
         const filesFromGoogle = filesResponse.data.files || [];
@@ -64,7 +66,6 @@ export async function POST() {
                         const page = await doc.getPage(i);
                         const content = await page.getTextContent();
                         
-                        // FIX 2: Use a type-safe method to extract text items
                         const textItems: { str: string }[] = [];
                         content.items.forEach((item: unknown) => {
                             if (typeof item === 'object' && item !== null && 'str' in item) {
@@ -129,5 +130,5 @@ export async function POST() {
     }
 }
 
-// Vercel specific configuration to increase timeout for Pro users
+// Vercel specific configuration
 export const maxDuration = 300; // 5 minutes
