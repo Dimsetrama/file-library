@@ -5,25 +5,22 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { google } from "googleapis";
 import { Readable } from "stream";
+import mammoth from "mammoth";
+import JSZip from "jszip";
 
-// --- FIX 1: Polyfill for DOMMatrix ---
-// This creates a fake DOMMatrix class on the server, preventing pdf.js from crashing.
-if (typeof global.DOMMatrix === 'undefined') {
+// --- THE POLYFILL ---
+// This creates a fake DOMMatrix class on the server BEFORE anything else happens.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+if (typeof (global as any).DOMMatrix === 'undefined') {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (global as any).DOMMatrix = class DOMMatrix {};
 }
 
-// --- FIX 2: Use the main import that Vercel can find ---
-import * as pdfjs from "pdfjs-dist";
-import mammoth from "mammoth";
-import JSZip from "jszip";
+// NOTE: We have REMOVED the static `import * as pdfjs from "pdfjs-dist";` from the top.
 
-// Define a type for DriveFile to use on the server
 type DriveFile = { id: string; name: string; mimeType: string; };
 
-// Helper function to get the Google Drive service
 async function getDriveService() {
-    // ... (This function remains the same)
     const session = await getServerSession(authOptions);
     if (!session || !session.accessToken) {
         throw new Error("Unauthorized");
@@ -35,14 +32,13 @@ async function getDriveService() {
 
 export async function POST() {
     try {
-        // --- FIX 3: Point the worker to the correct non-legacy build ---
+        // --- DYNAMIC IMPORT ---
+        // We now load pdf.js here, AFTER the polyfill has been applied.
+        const pdfjs = await import('pdfjs-dist');
         pdfjs.GlobalWorkerOptions.workerSrc = `pdfjs-dist/build/pdf.worker.mjs`;
 
         const drive = await getDriveService();
 
-        // ... (The rest of your code from here down remains exactly the same) ...
-
-        // 1. Get a list of all file IDs from Google Drive
         const searchQuery = `(mimeType='application/pdf' or mimeType='application/vnd.openxmlformats-officedocument.wordprocessingml.document' or mimeType='application/vnd.openxmlformats-officedocument.presentationml.presentation') and trashed = false`;
         const filesResponse = await drive.files.list({
             q: searchQuery,
@@ -59,14 +55,12 @@ export async function POST() {
             return NextResponse.json({ message: 'No files found to index.' });
         }
 
-        // 2. Process each file on the server
         const searchIndex: { [fileId: string]: { name: string, pages: {pageNumber: number, content: string}[] } } = {};
 
         for (const file of filesToIndex) {
             try {
                 const fileResponse = await drive.files.get({ fileId: file.id, alt: 'media' }, { responseType: 'arraybuffer' });
                 const arrayBuffer = fileResponse.data as ArrayBuffer;
-
                 const pages: {pageNumber: number, content: string}[] = [];
 
                 if (file.mimeType === 'application/pdf') {
@@ -74,7 +68,6 @@ export async function POST() {
                     for (let i = 1; i <= doc.numPages; i++) {
                         const page = await doc.getPage(i);
                         const content = await page.getTextContent();
-                        
                         const textItems: { str: string }[] = [];
                         content.items.forEach((item: unknown) => {
                             if (typeof item === 'object' && item !== null && 'str' in item) {
@@ -112,24 +105,16 @@ export async function POST() {
         const searchRes = await drive.files.list({ q: `name='search_index.json' and trashed = false`, fields: 'files(id)' });
         const existingFileId = searchRes.data.files?.[0]?.id;
         const media = { mimeType: 'application/json', body: Readable.from([indexContent]) };
-
-        if (existingFileId) {
-            await drive.files.update({ fileId: existingFileId, media: media });
-        } else {
-            await drive.files.create({ requestBody: { name: 'search_index.json', mimeType: 'application/json' }, media: media });
-        }
+        if (existingFileId) { await drive.files.update({ fileId: existingFileId, media: media }); }
+        else { await drive.files.create({ requestBody: { name: 'search_index.json', mimeType: 'application/json' }, media: media }); }
 
         // 4. Save the metadata timestamp
         const now = new Date().toISOString();
         const metaRes = await drive.files.list({ q: `name='index_metadata.json' and trashed = false`, fields: 'files(id)' });
         const metaFileId = metaRes.data.files?.[0]?.id;
         const metaMedia = { mimeType: 'application/json', body: Readable.from([JSON.stringify({ lastIndexTime: now })]) };
-
-        if (metaFileId) {
-            await drive.files.update({ fileId: metaFileId, media: metaMedia });
-        } else {
-            await drive.files.create({ requestBody: { name: 'index_metadata.json' }, media: metaMedia });
-        }
+        if (metaFileId) { await drive.files.update({ fileId: metaFileId, media: metaMedia }); }
+        else { await drive.files.create({ requestBody: { name: 'index_metadata.json' }, media: metaMedia }); }
 
         return NextResponse.json({ message: `Successfully indexed ${Object.keys(searchIndex).length} files!` });
         
@@ -139,5 +124,4 @@ export async function POST() {
     }
 }
 
-// Vercel specific configuration
 export const maxDuration = 300; // 5 minutes
