@@ -70,112 +70,34 @@ export default function Home() {
     performSearch(1);
   };
 
-  const handleBuildIndex = async () => {
+const handleBuildIndex = async () => {
     setIsIndexing(true);
-    setIndexBuildStatus('Step 1/3: Fetching all files...');
+    setIndexBuildStatus('Sending request to server to build index... This may take a few minutes.');
     try {
-      const pdfjs = await import('pdfjs-dist');
-      const mammoth = (await import('mammoth')).default;
-      const JSZip = (await import('jszip')).default;
+        const response = await fetch('/api/drive/build-index', { 
+            method: 'POST',
+        });
 
-      pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.mjs`;
-
-      async function extractPptxText(buffer: ArrayBuffer): Promise<string> {
-        const zip = await JSZip.loadAsync(buffer);
-        const slideFiles = Object.keys(zip.files).filter(f => f.startsWith("ppt/slides/") && f.endsWith(".xml"));
-        let fullText = "";
-        for (const slideFile of slideFiles) {
-            const content = await zip.files[slideFile].async("string");
-            const textNodes = content.match(/>(.*?)</g) || [];
-            fullText += textNodes.map(node => node.replace(/>|</g, "")).join(" ");
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.message || 'Failed to build index on the server.');
         }
-        return fullText;
-      }
 
-      const listRes = await fetch('/api/drive/get-all-files');
-      const fileListData = await listRes.json();
-      const filesToIndex: DriveFile[] = fileListData.files || [];
-      if (filesToIndex.length === 0) {
-        setIndexBuildStatus('No files found to index.');
-        setIsIndexing(false);
-        return;
-      }
-      setIndexBuildStatus(`Step 2/3: Processing ${filesToIndex.length} files...`);
-      const searchIndex: { [fileId: string]: { name: string, pages: {pageNumber: number, content: string}[] } } = {};
-      for (const file of filesToIndex) {
-        setIndexBuildStatus(`Step 2/3: Processing ${file.name}...`);
-        try {
-            const response = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`, {
-                headers: { 'Authorization': `Bearer ${session?.accessToken}` }
-            });
-            if (!response.ok) continue;
-            const arrayBuffer = await response.arrayBuffer();
-            const pages: {pageNumber: number, content: string}[] = [];
-
-            if (file.mimeType === 'application/pdf') {
-                const doc = await pdfjs.getDocument(arrayBuffer).promise;
-                for (let i = 1; i <= doc.numPages; i++) {
-                    const page = await doc.getPage(i);
-                    const content = await page.getTextContent();
-                    const textItems: { str: string }[] = [];
-                    content.items.forEach((item: unknown) => {
-                        if (typeof item === 'object' && item !== null && 'str' in item) {
-                            textItems.push(item as { str: string });
-                        }
-                    });
-                    const pageText = textItems.map(item => item.str).join(" ");
-                    pages.push({ pageNumber: i, content: pageText });
-                }
-            } else if (file.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-                const docxResult = await mammoth.extractRawText({ arrayBuffer });
-                pages.push({ pageNumber: 1, content: docxResult.value });
-            } else if (file.mimeType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') {
-                const pptxText = await extractPptxText(arrayBuffer);
-                pages.push({ pageNumber: 1, content: pptxText });
-            }
-            if (pages.length > 0) {
-              searchIndex[file.id] = { name: file.name, pages: pages };
-            }
-        } catch (processError) {
-            console.error(`Skipping file ${file.name} due to error:`, processError);
+        const result = await response.json();
+        setIndexBuildStatus(result.message || 'Index built successfully!');
+        
+        // Trigger a refresh of the status bulletin
+        if (checkIndexStatus) {
+            // We pass an empty array because the main point is just to re-trigger the check
+            checkIndexStatus([]); 
         }
-      }
- setIndexBuildStatus('Step 3/3: Saving index to Google Drive...');
-      const saveRes = await fetch('/api/drive/save-index', { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify(searchIndex) 
-      });
-      if (!saveRes.ok) throw new Error('Failed to save index.');
-      const result = await saveRes.json();
-
-      // --- START: NEW CODE TO SAVE TIMESTAMP ---
-      setIndexBuildStatus('Step 4/4: Finalizing build metadata...');
-      const now = new Date().toISOString();
-      await fetch('/api/drive/save-metadata', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lastIndexTime: now })
-      });
-      // --- END: NEW CODE ---
-
-              // --- NEW: Also save to localStorage as a fallback ---
-        localStorage.setItem('lastIndexTime', now);
-        // --- END NEW ---
-
-      setIndexBuildStatus(result.message || `Successfully indexed ${Object.keys(searchIndex).length} files!`);
-      
-      setIndexBuildStatus(result.message || `Successfully indexed ${Object.keys(searchIndex).length} files!`);
-      
-      // Update the bulletin immediately
-      setIndexStatusInfo({ status: 'uptodate', message: `Index is up to date. Last build: ${new Date(now).toLocaleString()}` });
 
     } catch (error) {
-      console.error('Failed to build index:', error);
-      setIndexBuildStatus('An error occurred. Check the console for details.');
+        console.error('Failed to build index:', error);
+        setIndexBuildStatus(error instanceof Error ? error.message : 'An unknown error occurred.');
     }
     setIsIndexing(false);
-  };
+};
 
   const handleHamsterClick = () => {
     setIsHamsterVisible(false);
