@@ -1,5 +1,3 @@
-// src/app/api/search/route.ts
-
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
@@ -13,6 +11,7 @@ type SearchIndex = {
 };
 
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export async function GET(req: NextRequest) {
     const session = await getServerSession(authOptions);
@@ -34,12 +33,10 @@ export async function GET(req: NextRequest) {
         auth.setCredentials({ access_token: session.accessToken });
         const drive = google.drive({ version: "v3", auth });
 
-        // --- THE FIX ---
-        // Look for the index file in the main 'drive' space.
         const listRes = await drive.files.list({
             q: "name='search_index.json' and trashed = false",
             fields: 'files(id, name)',
-            spaces: 'drive', // <-- Ensure we are looking in the correct space
+            spaces: 'drive',
         });
         
         const indexFile = listRes.data.files?.[0];
@@ -48,17 +45,18 @@ export async function GET(req: NextRequest) {
             return new NextResponse("Search index not found.", { status: 404 });
         }
 
-        // Download and parse the search index content
         const fileRes = await drive.files.get({ fileId: indexFile.id, alt: 'media' });
         const searchIndex: SearchIndex = fileRes.data as SearchIndex;
 
-        // Perform the search logic
+        // --- THE FIX: Find ALL matches, not just the first one ---
         const allResults: { id: string; name: string; snippet: string; pageNumber: number; }[] = [];
 
         for (const fileId in searchIndex) {
             const fileData = searchIndex[fileId];
+            // Iterate through each page within the file
             for (const pageData of fileData.pages) {
                 const contentLower = pageData.content.toLowerCase();
+                // If a match is found on this page...
                 if (contentLower.includes(query)) {
                     // Create a snippet
                     const index = contentLower.indexOf(query);
@@ -66,19 +64,19 @@ export async function GET(req: NextRequest) {
                     const end = Math.min(contentLower.length, index + 50);
                     const snippet = `...${pageData.content.substring(start, end)}...`;
 
+                    // ...add a result for EACH page that has a match
                     allResults.push({
                         id: fileId,
                         name: fileData.name,
                         snippet: snippet,
                         pageNumber: pageData.pageNumber
                     });
-                    // Break after finding the first match in a file to avoid duplicate file entries
-                    break; 
+
+                    // We have REMOVED the 'break' statement.
                 }
             }
         }
         
-        // Paginate the results
         const totalPages = Math.ceil(allResults.length / resultsPerPage);
         const startIndex = (page - 1) * resultsPerPage;
         const paginatedResults = allResults.slice(startIndex, startIndex + resultsPerPage);

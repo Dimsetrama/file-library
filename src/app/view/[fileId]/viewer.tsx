@@ -1,4 +1,3 @@
-// src/app/view/[fileId]/viewer.tsx
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
@@ -6,8 +5,8 @@ import { useSession } from 'next-auth/react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { Document, Page, pdfjs } from 'react-pdf';
 
-// ADD THIS ONE LINE INSTEAD
-import 'pdfjs-dist/web/pdf_viewer.css'; // This is the stable, official path
+// --- THE FIX: Use the single, stable CSS import path ---
+import 'pdfjs-dist/web/pdf_viewer.css';
 
 // Configure the worker from a reliable CDN
 pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.mjs`;
@@ -66,25 +65,34 @@ export default function Viewer() {
         }
     }, [session, fileId]);
 
+    // This function is now the definitive place to set the page number.
     function onDocumentLoadSuccess({ numPages }: { numPages: number }): void {
         setNumPages(numPages);
-        // After loading, jump to the correct initial page
+        // After the document is loaded, immediately jump to the correct initial page from the URL.
         setPageNumber(initialPage);
     }
 
     const goToPreviousPage = () => setPageNumber(prev => Math.max(1, prev - 1));
     const goToNextPage = () => setPageNumber(prev => Math.min(numPages || 0, prev + 1));
 
-    // This function is passed to react-pdf to handle highlighting
-const highlightText = useCallback((textItem: { str: string }) => {
-    if (!query || !textItem.str) return textItem.str;
-    
-    const regex = new RegExp(query, 'gi');
-    return textItem.str.replace(regex, (match) => `<mark class="bg-yellow-400 text-black">${match}</mark>`);
-  }, [query]);
+    const highlightText = useCallback((textItem: { str: string; }) => {
+        if (!query || !textItem.str) return textItem.str;
+        const regex = new RegExp(query, 'gi');
+        // Use a trick to render HTML by returning a string
+        return textItem.str.replace(regex, (match) => `<mark>${match}</mark>`);
+    }, [query]);
 
     return (
         <div className="flex flex-col items-center min-h-screen bg-gray-900 text-white p-8">
+            <style>
+                {/* Add styles for the <mark> tag used in highlighting */}
+                {`
+                    mark {
+                        background-color: yellow;
+                        color: black;
+                    }
+                `}
+            </style>
             <div className="w-full max-w-5xl">
                 <button onClick={() => router.back()} className="mb-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
                     &larr; Back to Library
@@ -108,12 +116,9 @@ const highlightText = useCallback((textItem: { str: string }) => {
                                 <Document file={fileUrl} onLoadSuccess={onDocumentLoadSuccess}>
                                     <Page
                                         pageNumber={pageNumber}
-                                        // This enables the selectable text layer
                                         renderTextLayer={true}
                                         renderAnnotationLayer={false}
-                                        // This applies our custom highlighting
                                         customTextRenderer={highlightText}
-                                        // This improves quality
                                         scale={1.5}
                                     />
                                 </Document>
@@ -138,3 +143,4 @@ const highlightText = useCallback((textItem: { str: string }) => {
         </div>
     );
 }
+

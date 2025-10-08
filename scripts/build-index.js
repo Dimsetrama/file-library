@@ -57,16 +57,36 @@ async function run() {
 
             try {
                 const fileResponse = await drive.files.get({ fileId: file.id, alt: 'media' }, { responseType: 'arraybuffer' });
-                const arrayBuffer = fileResponse.data;
+                const buffer = Buffer.from(fileResponse.data);
                 const pages = [];
+
                 if (file.mimeType === 'application/pdf') {
-                    const data = await pdfParse(Buffer.from(arrayBuffer));
-                    pages.push({ pageNumber: 1, content: data.text });
+                    // --- THIS IS THE CORRECTED PDF LOGIC ---
+                    const options = {
+                        // This special function tells pdf-parse to add a separator after each page
+                        pagerender: (pageData) => {
+                            return pageData.getTextContent()
+                                .then(textContent => {
+                                    return textContent.items.map(item => item.str).join(' ');
+                                })
+                                .then(text => {
+                                    // Use a unique separator that's unlikely to appear in the text
+                                    return text + '\n<--PAGE_BREAK-->\n';
+                                });
+                        }
+                    };
+                    const data = await pdfParse(buffer, options);
+                    const pageTexts = data.text.split('<--PAGE_BREAK-->').filter(text => text.trim().length > 0);
+                    
+                    pageTexts.forEach((text, index) => {
+                        pages.push({ pageNumber: index + 1, content: text });
+                    });
+
                 } else if (file.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-                    const docxResult = await mammoth.extractRawText({ arrayBuffer });
+                    const docxResult = await mammoth.extractRawText({ buffer });
                     pages.push({ pageNumber: 1, content: docxResult.value });
                 } else if (file.mimeType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') {
-                    const zip = await JSZip.loadAsync(arrayBuffer);
+                    const zip = await JSZip.loadAsync(buffer);
                     const slideFiles = Object.keys(zip.files).filter(f => f.startsWith("ppt/slides/") && f.endsWith(".xml"));
                     let fullText = "";
                     for (const slideFile of slideFiles) {
@@ -84,21 +104,15 @@ async function run() {
         
         console.log("Saving search_index.json to Google Drive...");
         const indexContent = JSON.stringify(searchIndex);
-        const searchRes = await drive.files.list({ q: `name='search_index.json' and trashed = false`, fields: 'files(id)' });
+        const searchRes = await drive.files.list({ q: `name='search_index.json' and trashed = false`, fields: 'files(id, description)' });
         const existingFileId = searchRes.data.files?.[0]?.id;
-        const media = { mimeType: 'application/json', body: Readable.from([indexContent]) };
-        if (existingFileId) { await drive.files.update({ fileId: existingFileId, media }); }
-        else { await drive.files.create({ requestBody: { name: 'search_index.json' }, media }); }
-
-        // --- THE FIX: SAVE TIMESTAMP TO A LOCAL FILE ---
-        console.log("Saving metadata to local file...");
         const now = new Date().toISOString();
-        const METADATA_PATH = path.join(process.cwd(), '.tmp', 'metadata.json');
-        try {
-            await fs.mkdir(path.dirname(METADATA_PATH), { recursive: true });
-            await fs.writeFile(METADATA_PATH, JSON.stringify({ lastBuildTime: now }));
-        } catch (e) {
-            console.error("Failed to write local metadata file:", e);
+        
+        const media = { mimeType: 'application/json', body: Readable.from([indexContent]) };
+        if (existingFileId) { 
+            await drive.files.update({ fileId: existingFileId, media, requestBody: { description: now } });
+        } else { 
+            await drive.files.create({ requestBody: { name: 'search_index.json', description: now }, media }); 
         }
 
         await updateStatus({ status: 'complete', message: `Index build complete. Successfully indexed ${Object.keys(searchIndex).length} files.` });
