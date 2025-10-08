@@ -3,125 +3,29 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
-import { google } from "googleapis";
-import { Readable } from "stream";
-import mammoth from "mammoth";
-import JSZip from "jszip";
-
-// --- THE POLYFILL ---
-// This creates a fake DOMMatrix class on the server BEFORE anything else happens.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-if (typeof (global as any).DOMMatrix === 'undefined') {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (global as any).DOMMatrix = class DOMMatrix {};
-}
-
-// NOTE: We have REMOVED the static `import * as pdfjs from "pdfjs-dist";` from the top.
-
-type DriveFile = { id: string; name: string; mimeType: string; };
-
-async function getDriveService() {
-    const session = await getServerSession(authOptions);
-    if (!session || !session.accessToken) {
-        throw new Error("Unauthorized");
-    }
-    const auth = new google.auth.OAuth2();
-    auth.setCredentials({ access_token: session.accessToken });
-    return google.drive({ version: "v3", auth });
-}
+import { spawn } from 'child_process'; // Node.js tool for running scripts
 
 export async function POST() {
-    try {
-        // --- DYNAMIC IMPORT ---
-        // We now load pdf.js here, AFTER the polyfill has been applied.
-        const pdfjs = await import('pdfjs-dist');
-        pdfjs.GlobalWorkerOptions.workerSrc = `pdfjs-dist/build/pdf.worker.mjs`;
-
-        const drive = await getDriveService();
-
-        const searchQuery = `(mimeType='application/pdf' or mimeType='application/vnd.openxmlformats-officedocument.wordprocessingml.document' or mimeType='application/vnd.openxmlformats-officedocument.presentationml.presentation') and trashed = false`;
-        const filesResponse = await drive.files.list({
-            q: searchQuery,
-            fields: 'files(id, name, mimeType)',
-            pageSize: 1000
-        });
-
-        const filesFromGoogle = filesResponse.data.files || [];
-        const filesToIndex = filesFromGoogle.filter(
-            (file): file is DriveFile => file.id != null && file.name != null && file.mimeType != null
-        );
-
-        if (filesToIndex.length === 0) {
-            return NextResponse.json({ message: 'No files found to index.' });
-        }
-
-        const searchIndex: { [fileId: string]: { name: string, pages: {pageNumber: number, content: string}[] } } = {};
-
-        for (const file of filesToIndex) {
-            try {
-                const fileResponse = await drive.files.get({ fileId: file.id, alt: 'media' }, { responseType: 'arraybuffer' });
-                const arrayBuffer = fileResponse.data as ArrayBuffer;
-                const pages: {pageNumber: number, content: string}[] = [];
-
-                if (file.mimeType === 'application/pdf') {
-                    const doc = await pdfjs.getDocument(arrayBuffer).promise;
-                    for (let i = 1; i <= doc.numPages; i++) {
-                        const page = await doc.getPage(i);
-                        const content = await page.getTextContent();
-                        const textItems: { str: string }[] = [];
-                        content.items.forEach((item: unknown) => {
-                            if (typeof item === 'object' && item !== null && 'str' in item) {
-                                textItems.push(item as { str: string });
-                            }
-                        });
-                        const pageText = textItems.map(item => item.str).join(" ");
-                        pages.push({ pageNumber: i, content: pageText });
-                    }
-                } else if (file.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-                    const docxResult = await mammoth.extractRawText({ arrayBuffer });
-                    pages.push({ pageNumber: 1, content: docxResult.value });
-                } else if (file.mimeType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') {
-                    const zip = await JSZip.loadAsync(arrayBuffer);
-                    const slideFiles = Object.keys(zip.files).filter(f => f.startsWith("ppt/slides/") && f.endsWith(".xml"));
-                    let fullText = "";
-                    for (const slideFile of slideFiles) {
-                        const content = await zip.files[slideFile].async("string");
-                        const textNodes = content.match(/>(.*?)</g) || [];
-                        fullText += textNodes.map(node => node.replace(/>|</g, "")).join(" ");
-                    }
-                    pages.push({ pageNumber: 1, content: fullText });
-                }
-
-                if (pages.length > 0) {
-                    searchIndex[file.id] = { name: file.name, pages: pages };
-                }
-            } catch (processError) {
-                console.error(`Skipping file ${file.name} due to error:`, processError);
-            }
-        }
-
-        // 3. Save the final index file to Google Drive
-        const indexContent = JSON.stringify(searchIndex);
-        const searchRes = await drive.files.list({ q: `name='search_index.json' and trashed = false`, fields: 'files(id)' });
-        const existingFileId = searchRes.data.files?.[0]?.id;
-        const media = { mimeType: 'application/json', body: Readable.from([indexContent]) };
-        if (existingFileId) { await drive.files.update({ fileId: existingFileId, media: media }); }
-        else { await drive.files.create({ requestBody: { name: 'search_index.json', mimeType: 'application/json' }, media: media }); }
-
-        // 4. Save the metadata timestamp
-        const now = new Date().toISOString();
-        const metaRes = await drive.files.list({ q: `name='index_metadata.json' and trashed = false`, fields: 'files(id)' });
-        const metaFileId = metaRes.data.files?.[0]?.id;
-        const metaMedia = { mimeType: 'application/json', body: Readable.from([JSON.stringify({ lastIndexTime: now })]) };
-        if (metaFileId) { await drive.files.update({ fileId: metaFileId, media: metaMedia }); }
-        else { await drive.files.create({ requestBody: { name: 'index_metadata.json' }, media: metaMedia }); }
-
-        return NextResponse.json({ message: `Successfully indexed ${Object.keys(searchIndex).length} files!` });
-        
-    } catch (error) {
-        console.error("Error during server-side build:", error);
-        return new NextResponse(JSON.stringify({ message: "An internal server error occurred during indexing." }), { status: 500 });
+    const session = await getServerSession(authOptions);
+    if (!session || !session.accessToken) {
+        return new NextResponse(JSON.stringify({ message: "Unauthorized" }), { status: 401 });
     }
+
+    // Get the path to our script
+    const scriptPath = 'scripts/build-index.js';
+
+    // Run the script in the background using Node.js
+    // We pass the accessToken as a command-line argument
+    const child = spawn('node', [scriptPath, session.accessToken], {
+        detached: true, // Allows the script to run even after the request is finished
+        stdio: 'ignore' // Prevents the parent process from waiting
+    });
+
+    // Unreference the child process to allow the parent (this API route) to exit
+    child.unref();
+
+    // Immediately tell the browser that the process has started
+    return new NextResponse(JSON.stringify({ message: "Indexing process started in the background." }), { status: 202 });
 }
 
-export const maxDuration = 300; // 5 minutes
+export const maxDuration = 300; // Keep this for Vercel

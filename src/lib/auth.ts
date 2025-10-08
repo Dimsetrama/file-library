@@ -50,20 +50,21 @@ declare module "next-auth/jwt" {
 
 export const authOptions: NextAuthOptions = {
   secret: process.env.NEXTAUTH_SECRET,
-  providers: [
+providers: [
     GoogleProvider({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-      authorization: {
-        params: {
-          scope: "openid email profile https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.appdata",
-          access_type: "offline",
-          response_type: "code",
-          prompt: "consent",
-        },
-      },
-    }),
-  ],
+        clientId: process.env.GOOGLE_CLIENT_ID!,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+        authorization: {
+            params: {
+                prompt: "consent",
+                access_type: "offline",
+                response_type: "code",
+                // This is the crucial change:
+                scope: "openid email profile https://www.googleapis.com/auth/drive" 
+            }
+        }
+    })
+],
   callbacks: {
     async jwt({ token, account }: { token: JWT; account: Account | null }) {
       if (account) {
