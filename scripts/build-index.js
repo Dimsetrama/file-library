@@ -78,7 +78,8 @@ async function run() {
         const now = new Date().toISOString();
         
         const media = { mimeType: 'application/json', body: Readable.from([indexContent]) };
-        const requestBody = { description: now }; // Set the timestamp here
+        // The timestamp is now the file's description
+        const requestBody = { description: now }; 
 
         if (existingFileId) { 
             await drive.files.update({ fileId: existingFileId, media, requestBody });

@@ -6,11 +6,24 @@ import AuthButton from '@/components/AuthButton';
 import Link from 'next/link';
 import Hamster from '@/components/Hamster';
 
-type DriveFile = { id: string; name: string; mimeType: string; createdTime?: string; size?: string; webViewLink?: string; };
+// --- TYPE DEFINITIONS ---
+type DriveFile = {
+  id: string;
+  name: string;
+  mimeType: string;
+  createdTime?: string;
+  size?: string;
+  webViewLink?: string;
+};
 type SearchResult = { id: string; name: string; snippet: string; pageNumber: number; };
-type IndexStatusInfo = { status: 'checking' | 'uptodate' | 'outdated' | 'none'; message: string; };
+type IndexStatusInfo = {
+  status: 'checking' | 'uptodate' | 'outdated' | 'none';
+  message: string;
+};
 
+// --- COMPONENT DEFINITION ---
 export default function Home() {
+  // --- STATE DECLARATIONS ---
   const { data: session } = useSession();
   const [isIndexing, setIsIndexing] = useState(false);
   const [indexBuildStatus, setIndexBuildStatus] = useState('');
@@ -26,7 +39,9 @@ export default function Home() {
   const [recentFilesSearch, setRecentFilesSearch] = useState('');
   const [pageTokens, setPageTokens] = useState<(string | undefined)[]>([undefined]);
   const [recentFilesCurrentPage, setRecentFilesCurrentPage] = useState(1);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
+  // --- HAMSTER STATES ---
   const [showWigglingHamster, setShowWigglingHamster] = useState(true);
   const [isWigglingHamsterExploding, setIsWigglingHamsterExploding] = useState(false);
   const [showRespawnHamster, setShowRespawnHamster] = useState(false);
@@ -35,7 +50,7 @@ export default function Home() {
   const [activeHamster, setActiveHamster] = useState<'spinning' | 'dancing'>('spinning');
   const [isHamsterVisible, setIsHamsterVisible] = useState(true);
 
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  // --- CORE LOGIC FUNCTIONS ---
 
   const checkIndexStatus = useCallback(async (driveFiles: DriveFile[]) => {
     try {
@@ -96,8 +111,6 @@ export default function Home() {
     }
   }, [session, pageTokens, recentFilesSearch]);
 
-  // --- START: RESTORED POLLING LOGIC ---
-
   const pollIndexStatus = useCallback(() => {
     if (pollingIntervalRef.current) {
       clearInterval(pollingIntervalRef.current);
@@ -116,8 +129,8 @@ export default function Home() {
             clearInterval(pollingIntervalRef.current);
           }
           setIndexBuildStatus(data.message);
-          setIsIndexing(false); // Re-enable the button
-          fetchRecentFiles(1); // Refresh file list and status check
+          setIsIndexing(false);
+          fetchRecentFiles(1);
         }
       } catch (error) {
         console.error("Polling error:", error);
@@ -127,7 +140,7 @@ export default function Home() {
         setIndexBuildStatus('Error checking progress. Please refresh.');
         setIsIndexing(false);
       }
-    }, 3000); // Poll every 3 seconds
+    }, 3000);
   }, [fetchRecentFiles]);
 
 
@@ -140,15 +153,13 @@ export default function Home() {
       if (!response.ok || response.status !== 202) { 
         throw new Error(result.message || 'Failed to start index process.'); 
       }
-      pollIndexStatus(); // Start polling for progress
+      pollIndexStatus();
     } catch (error) {
       setIndexBuildStatus(error instanceof Error ? error.message : 'An unknown error occurred.');
       setIsIndexing(false);
     }
   };
   
-  // --- END: RESTORED POLLING LOGIC ---
-
   const performSearch = async (page = 1) => {
     if (!searchQuery) return;
     setIsSearching(true);
@@ -171,12 +182,12 @@ export default function Home() {
     setPageTokens([undefined]);
     fetchRecentFiles(1);
   };
-  
+
   const handleSearchSubmit = (e: FormEvent) => {
     e.preventDefault();
     performSearch(1);
   };
-  
+
   const formatFileSize = (bytesStr?: string): string => {
     if (!bytesStr) return '-';
     const bytes = Number(bytesStr);
@@ -214,13 +225,16 @@ export default function Home() {
     }, 1000);
   };
 
+  // --- SIDE EFFECTS (HOOKS) ---
+
   // This hook is for INITIAL data load.
   useEffect(() => {
     if (session) {
+      if(pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
       fetchRecentFiles(1);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session]); // This intentionally only depends on `session` to break loops.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]); // This intentionally only depends on `session` to break the loop.
 
   // This hook runs ONLY when the file list is updated.
   useEffect(() => {
@@ -230,6 +244,7 @@ export default function Home() {
   }, [session, recentFiles, checkIndexStatus]);
 
 
+  // --- RENDER LOGIC ---
   const statusDotColor = {
     checking: 'bg-gray-400',
     uptodate: 'bg-green-500',
@@ -267,7 +282,7 @@ export default function Home() {
             Welcome to Etrama&apos;s Library
           </h1>
 
-          {session && (
+          {session ? (
             <>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
                 <div className="md:col-span-2 p-4 border border-gray-700 rounded-lg">
@@ -399,8 +414,9 @@ export default function Home() {
                 </div>
               </div>
             </>
+          ) : (
+             <p>Please sign in to view your files.</p>
           )}
-          {!session && <p>Please sign in to view your files.</p>}
         </div>
       </main>
       <div 
