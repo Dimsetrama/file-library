@@ -1,22 +1,44 @@
-// src/app/api/drive/get-metadata/route.ts
 import { NextResponse } from "next/server";
-import fs from 'fs/promises';
-import path from 'path';
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/lib/auth";
+import { google } from "googleapis";
 
-const METADATA_PATH = path.join(process.cwd(), '.tmp', 'metadata.json');
+const INDEX_FILE_NAME = 'search_index.json';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export async function GET() {
+  const session = await getServerSession(authOptions);
+  if (!session || !session.accessToken) {
+    return new NextResponse("Unauthorized", { status: 401 });
+  }
+
   try {
-    const data = await fs.readFile(METADATA_PATH, 'utf-8');
-    const metadata = JSON.parse(data);
-    return NextResponse.json({ lastBuildTime: metadata.lastBuildTime });
+    const auth = new google.auth.OAuth2();
+    auth.setCredentials({ access_token: session.accessToken });
+    const drive = google.drive({ version: "v3", auth });
+
+    const searchRes = await drive.files.list({
+      q: `name='${INDEX_FILE_NAME}' and trashed = false`,
+      // Ask for the description field, which contains our timestamp
+      fields: 'files(id, description)', 
+    });
+
+    const indexFile = searchRes.data.files?.[0];
+
+    // The description field now holds our lastBuildTime
+    const lastBuildTime = indexFile?.description;
+
+    if (!lastBuildTime) {
+      return new NextResponse("Index file or its timestamp not found.", { status: 404 });
+    }
+
+    return NextResponse.json({ lastBuildTime: lastBuildTime });
+
   } catch (error) {
-    // If the file can't be read, it means the index hasn't been successfully built yet.
-    console.error("Could not read local metadata file:", (error as Error).message);
-    return new NextResponse("Metadata file not found.", { status: 404 });
+    console.error("Error fetching metadata:", error);
+    return new NextResponse("Internal Server Error", { status: 500 });
   }
 }
 
