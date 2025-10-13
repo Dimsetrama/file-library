@@ -4,25 +4,12 @@ const { Readable } = require('stream');
 const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
 const JSZip = require('jszip');
-const fs = require('fs/promises');
-const path = require('path');
-
-const STATUS_FILE_PATH = path.join(process.cwd(), '.tmp', 'indexing-status.json');
-
-async function updateStatus(status) {
-    try {
-        await fs.mkdir(path.dirname(STATUS_FILE_PATH), { recursive: true });
-        await fs.writeFile(STATUS_FILE_PATH, JSON.stringify(status));
-    } catch (e) {
-        console.error("Failed to write status file:", e);
-    }
-}
 
 async function run() {
     console.log("Starting index build script...");
     const accessToken = process.argv[2];
     if (!accessToken) {
-        await updateStatus({ status: 'error', message: 'Access Token was not provided.' });
+        console.error("Access Token was not provided.");
         process.exit(1);
     }
 
@@ -42,46 +29,28 @@ async function run() {
             (file) => file.id && file.name && file.mimeType
         );
 
-        if (filesToIndex.length === 0) {
-            await updateStatus({ status: 'complete', message: 'No new files found to index.' });
-            return;
-        }
-
-        await updateStatus({ status: 'processing', progress: 0, total: filesToIndex.length });
-        
+        console.log(`Found ${filesToIndex.length} files to process.`);
         const searchIndex = {};
-        for (let i = 0; i < filesToIndex.length; i++) {
-            const file = filesToIndex[i];
-            console.log(`Processing file ${i + 1}/${filesToIndex.length}: ${file.name}`);
-            await updateStatus({ status: 'processing', progress: i + 1, total: filesToIndex.length });
 
+        for (const file of filesToIndex) {
             try {
                 const fileResponse = await drive.files.get({ fileId: file.id, alt: 'media' }, { responseType: 'arraybuffer' });
                 const buffer = Buffer.from(fileResponse.data);
                 const pages = [];
 
                 if (file.mimeType === 'application/pdf') {
-                    // --- THIS IS THE CORRECTED PDF LOGIC ---
                     const options = {
-                        // This special function tells pdf-parse to add a separator after each page
                         pagerender: (pageData) => {
-                            return pageData.getTextContent()
-                                .then(textContent => {
-                                    return textContent.items.map(item => item.str).join(' ');
-                                })
-                                .then(text => {
-                                    // Use a unique separator that's unlikely to appear in the text
-                                    return text + '\n<--PAGE_BREAK-->\n';
-                                });
+                            return pageData.getTextContent().then(textContent => {
+                                return textContent.items.map(item => item.str).join(' ');
+                            }).then(text => text + '\n<--PAGE_BREAK-->\n');
                         }
                     };
                     const data = await pdfParse(buffer, options);
                     const pageTexts = data.text.split('<--PAGE_BREAK-->').filter(text => text.trim().length > 0);
-                    
                     pageTexts.forEach((text, index) => {
                         pages.push({ pageNumber: index + 1, content: text });
                     });
-
                 } else if (file.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
                     const docxResult = await mammoth.extractRawText({ buffer });
                     pages.push({ pageNumber: 1, content: docxResult.value });
@@ -104,26 +73,26 @@ async function run() {
         
         console.log("Saving search_index.json to Google Drive...");
         const indexContent = JSON.stringify(searchIndex);
-        const searchRes = await drive.files.list({ q: `name='search_index.json' and trashed = false`, fields: 'files(id, description)' });
+        const searchRes = await drive.files.list({ q: `name='search_index.json' and trashed = false`, fields: 'files(id)' });
         const existingFileId = searchRes.data.files?.[0]?.id;
         const now = new Date().toISOString();
         
         const media = { mimeType: 'application/json', body: Readable.from([indexContent]) };
+        // The timestamp is now the file's description
+        const requestBody = { description: now }; 
+
         if (existingFileId) { 
-            await drive.files.update({ fileId: existingFileId, media, requestBody: { description: now } });
+            await drive.files.update({ fileId: existingFileId, media, requestBody });
         } else { 
-            await drive.files.create({ requestBody: { name: 'search_index.json', description: now }, media }); 
+            await drive.files.create({ requestBody: { name: 'search_index.json', ...requestBody }, media }); 
         }
 
-        await updateStatus({ status: 'complete', message: `Index build complete. Successfully indexed ${Object.keys(searchIndex).length} files.` });
-        console.log(`Index build complete.`);
+        console.log(`Index build complete. Successfully indexed ${Object.keys(searchIndex).length} files.`);
 
     } catch (error) {
         console.error("FATAL ERROR during index build script:", error.message);
-        await updateStatus({ status: 'error', message: error.message });
         process.exit(1);
     }
 }
-
 run();
 

@@ -1,4 +1,3 @@
-// src/app/page.tsx
 'use client';
 
 import { useState, useEffect, FormEvent, useCallback, useRef } from 'react';
@@ -54,10 +53,8 @@ export default function Home() {
   // --- CORE LOGIC FUNCTIONS ---
 
   const checkIndexStatus = useCallback(async (driveFiles: DriveFile[]) => {
-    setIndexStatusInfo({ status: 'checking', message: 'Verifying index status...'});
     try {
       const metaRes = await fetch('/api/drive/get-metadata');
-      
       let latestFileTime: string | null = null;
       if (driveFiles.length > 0) {
         const contentFiles = driveFiles.filter(file => file.name !== 'search_index.json');
@@ -68,31 +65,19 @@ export default function Home() {
           }, contentFiles[0].createdTime || '');
         }
       }
-
-      let lastBuildTime: string | null = null;
-      let isVerified = false;
-
-      if (metaRes.ok) {
-        const metaData = await metaRes.json();
-        lastBuildTime = metaData.lastBuildTime;
-        isVerified = true;
-        // Sync the authoritative time from the server to local storage
-        localStorage.setItem('lastBuildTimeLocal', lastBuildTime as string);
-      } else {
-        // If the server check fails, fall back to the local copy
-        lastBuildTime = localStorage.getItem('lastBuildTimeLocal');
-      }
       
-      if (!lastBuildTime) {
+      if (!metaRes.ok) {
         setIndexStatusInfo({ status: 'none', message: 'Index not found. Please build the index.' });
         return;
       }
+      
+      const metaData = await metaRes.json();
+      const lastBuildTime = metaData.lastBuildTime;
 
       if (latestFileTime && new Date(latestFileTime) > new Date(lastBuildTime)) {
         setIndexStatusInfo({ status: 'outdated', message: 'New files detected. Please re-build the index.' });
       } else {
-        const statusMessage = `Index is up to date ${isVerified ? '' : '(unverified)'}. Last build: ${new Date(lastBuildTime).toLocaleDateString()}`;
-        setIndexStatusInfo({ status: 'uptodate', message: statusMessage });
+        setIndexStatusInfo({ status: 'uptodate', message: `Index is up to date. Last build: ${new Date(lastBuildTime).toLocaleDateString()}` });
       }
     } catch (error) {
       console.error("Could not perform index status check:", error);
@@ -116,7 +101,8 @@ export default function Home() {
           setRecentFiles(files);
           setPageTokens(prevTokens => {
             const newPageTokens = [...prevTokens];
-            newPageTokens[page] = data.nextPageToken || undefined;
+            if (data.nextPageToken) { newPageTokens[page] = data.nextPageToken; }
+            else { newPageTokens[page] = undefined; }
             return newPageTokens;
           });
         })
@@ -126,29 +112,37 @@ export default function Home() {
   }, [session, pageTokens, recentFilesSearch]);
 
   const pollIndexStatus = useCallback(() => {
-    if (pollingIntervalRef.current) { clearInterval(pollingIntervalRef.current); }
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+    }
+
     pollingIntervalRef.current = setInterval(async () => {
       try {
         const res = await fetch('/api/drive/indexing-status');
         const data = await res.json();
+
         if (data.status === 'processing') {
           const percentage = data.total > 0 ? Math.round((data.progress / data.total) * 100) : 0;
           setIndexBuildStatus(`Processing file ${data.progress} of ${data.total} (${percentage}%)...`);
         } else if (data.status === 'complete' || data.status === 'error') {
-          if (pollingIntervalRef.current) { clearInterval(pollingIntervalRef.current); }
+          if (pollingIntervalRef.current) {
+            clearInterval(pollingIntervalRef.current);
+          }
           setIndexBuildStatus(data.message);
           setIsIndexing(false);
-          if(data.status === 'complete') {
-            localStorage.setItem('lastBuildTimeLocal', new Date().toISOString());
-          }
           fetchRecentFiles(1);
         }
       } catch (error) {
         console.error("Polling error:", error);
-        if (pollingIntervalRef.current) { clearInterval(pollingIntervalRef.current); }
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+        }
+        setIndexBuildStatus('Error checking progress. Please refresh.');
+        setIsIndexing(false);
       }
     }, 3000);
   }, [fetchRecentFiles]);
+
 
   const handleBuildIndex = async () => {
     setIsIndexing(true);
@@ -156,7 +150,9 @@ export default function Home() {
     try {
       const response = await fetch('/api/drive/build-index', { method: 'POST' });
       const result = await response.json();
-      if (!response.ok) { throw new Error(result.message || 'Failed to start index process.'); }
+      if (!response.ok || response.status !== 202) { 
+        throw new Error(result.message || 'Failed to start index process.'); 
+      }
       pollIndexStatus();
     } catch (error) {
       setIndexBuildStatus(error instanceof Error ? error.message : 'An unknown error occurred.');
@@ -181,10 +177,9 @@ export default function Home() {
     setIsSearching(false);
   };
   
-  // --- EVENT HANDLERS ---
   const handleRecentFilesSearchSubmit = (e: FormEvent) => {
     e.preventDefault();
-    setPageTokens([undefined]); // Reset pagination for new search
+    setPageTokens([undefined]);
     fetchRecentFiles(1);
   };
 
@@ -231,21 +226,23 @@ export default function Home() {
   };
 
   // --- SIDE EFFECTS (HOOKS) ---
+
+  // This hook is for INITIAL data load.
   useEffect(() => {
     if (session) {
-      // This dependency array is intentionally simple. We only want this to run
-      // once when the session loads. `fetchRecentFiles` will not cause a loop.
+      if(pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
       fetchRecentFiles(1);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]); // This intentionally only depends on `session` to break the loop.
 
+  // This hook runs ONLY when the file list is updated.
   useEffect(() => {
-    // This hook runs whenever the file list is updated, triggering the status check.
-    if (session && recentFiles.length > 0) { 
-      checkIndexStatus(recentFiles); 
+    if (session && recentFiles.length > 0) {
+      checkIndexStatus(recentFiles);
     }
   }, [session, recentFiles, checkIndexStatus]);
+
 
   // --- RENDER LOGIC ---
   const statusDotColor = {
@@ -285,7 +282,7 @@ export default function Home() {
             Welcome to Etrama&apos;s Library
           </h1>
 
-          {session && (
+          {session ? (
             <>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
                 <div className="md:col-span-2 p-4 border border-gray-700 rounded-lg">
@@ -417,8 +414,9 @@ export default function Home() {
                 </div>
               </div>
             </>
+          ) : (
+             <p>Please sign in to view your files.</p>
           )}
-          {!session && <p>Please sign in to view your files.</p>}
         </div>
       </main>
       <div 
