@@ -1,3 +1,4 @@
+// src/app/api/drive/get-metadata/route.ts
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
@@ -10,6 +11,7 @@ export const revalidate = 0;
 
 export async function GET() {
   const session = await getServerSession(authOptions);
+
   if (!session || !session.accessToken) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
@@ -21,13 +23,10 @@ export async function GET() {
 
     const searchRes = await drive.files.list({
       q: `name='${INDEX_FILE_NAME}' and trashed = false`,
-      // Ask for the description field, which contains our timestamp
-      fields: 'files(id, description)', 
+      fields: 'files(id, description)',
     });
 
     const indexFile = searchRes.data.files?.[0];
-
-    // The description field now holds our lastBuildTime
     const lastBuildTime = indexFile?.description;
 
     if (!lastBuildTime) {
@@ -35,10 +34,8 @@ export async function GET() {
     }
 
     return NextResponse.json({ lastBuildTime: lastBuildTime });
-
   } catch (error) {
     console.error("Error fetching metadata:", error);
     return new NextResponse("Internal Server Error", { status: 500 });
   }
 }
-

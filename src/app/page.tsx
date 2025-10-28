@@ -1,12 +1,14 @@
+// src/app/page.tsx
 'use client';
 
-import { useState, useEffect, FormEvent, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import AuthButton from '@/components/AuthButton';
+import SearchBar from '@/components/SearchBar';
 import Link from 'next/link';
 import Hamster from '@/components/Hamster';
 
-// --- TYPE DEFINITIONS ---
+// TYPE DEFINITIONS
 type DriveFile = {
   id: string;
   name: string;
@@ -15,33 +17,47 @@ type DriveFile = {
   size?: string;
   webViewLink?: string;
 };
-type SearchResult = { id: string; name: string; snippet: string; pageNumber: number; };
+
+type SearchResult = { 
+  id: string; 
+  name: string; 
+  snippet: string; 
+  pageNumber: number; 
+};
+
 type IndexStatusInfo = {
   status: 'checking' | 'uptodate' | 'outdated' | 'none';
   message: string;
 };
 
-// --- COMPONENT DEFINITION ---
 export default function Home() {
-  // --- STATE DECLARATIONS ---
   const { data: session } = useSession();
+
+  // INDEX BUILDING STATES
   const [isIndexing, setIsIndexing] = useState(false);
   const [indexBuildStatus, setIndexBuildStatus] = useState('');
+  const [indexProgress, setIndexProgress] = useState(0);
+  const [indexStatusInfo, setIndexStatusInfo] = useState<IndexStatusInfo>({ 
+    status: 'checking', 
+    message: 'Checking index status...' 
+  });
+
+  // SEARCH STATES
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
-  const [indexStatusInfo, setIndexStatusInfo] = useState<IndexStatusInfo>({ status: 'checking', message: 'Checking index status...' });
+
+  // FILE LIST STATES
   const [recentFiles, setRecentFiles] = useState<DriveFile[]>([]);
   const [isRecentFilesLoading, setIsRecentFilesLoading] = useState(false);
   const [recentFilesSearch, setRecentFilesSearch] = useState('');
   const [pageTokens, setPageTokens] = useState<(string | undefined)[]>([undefined]);
   const [recentFilesCurrentPage, setRecentFilesCurrentPage] = useState(1);
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // --- HAMSTER STATES ---
+  // HAMSTER STATES
   const [showWigglingHamster, setShowWigglingHamster] = useState(true);
   const [isWigglingHamsterExploding, setIsWigglingHamsterExploding] = useState(false);
   const [showRespawnHamster, setShowRespawnHamster] = useState(false);
@@ -50,11 +66,30 @@ export default function Home() {
   const [activeHamster, setActiveHamster] = useState<'spinning' | 'dancing'>('spinning');
   const [isHamsterVisible, setIsHamsterVisible] = useState(true);
 
-  // --- CORE LOGIC FUNCTIONS ---
+  // ============================================
+  // HELPER FUNCTIONS
+  // ============================================
 
+  const formatFileSize = (bytesStr?: string): string => {
+    if (!bytesStr) return '-';
+    const bytes = Number(bytesStr);
+    if (isNaN(bytes) || bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  // ============================================
+  // CORE LOGIC FUNCTIONS
+  // ============================================
+
+  // Check if index is up to date
   const checkIndexStatus = useCallback(async (driveFiles: DriveFile[]) => {
     try {
       const metaRes = await fetch('/api/drive/get-metadata');
+      
+      // Find the newest file in the drive
       let latestFileTime: string | null = null;
       if (driveFiles.length > 0) {
         const contentFiles = driveFiles.filter(file => file.name !== 'search_index.json');
@@ -67,136 +102,168 @@ export default function Home() {
       }
       
       if (!metaRes.ok) {
-        setIndexStatusInfo({ status: 'none', message: 'Index not found. Please build the index.' });
+        setIndexStatusInfo({ 
+          status: 'none', 
+          message: 'Index not found. Please build the index.' 
+        });
         return;
       }
       
       const metaData = await metaRes.json();
       const lastBuildTime = metaData.lastBuildTime;
-
+      
       if (latestFileTime && new Date(latestFileTime) > new Date(lastBuildTime)) {
-        setIndexStatusInfo({ status: 'outdated', message: 'New files detected. Please re-build the index.' });
+        setIndexStatusInfo({ 
+          status: 'outdated', 
+          message: 'New files detected. Please re-build the index.' 
+        });
       } else {
-        setIndexStatusInfo({ status: 'uptodate', message: `Index is up to date. Last build: ${new Date(lastBuildTime).toLocaleDateString()}` });
+        setIndexStatusInfo({ 
+          status: 'uptodate', 
+          message: `Index is up to date. Last build: ${new Date(lastBuildTime).toLocaleDateString()}` 
+        });
       }
     } catch (error) {
       console.error("Could not perform index status check:", error);
-      setIndexStatusInfo({ status: 'none', message: 'Error checking index status.' });
+      setIndexStatusInfo({ 
+        status: 'none', 
+        message: 'Error checking index status.' 
+      });
     }
   }, []);
 
+  // Fetch recent files from Google Drive
   const fetchRecentFiles = useCallback((page: number) => {
-    if (session) {
-      setIsRecentFilesLoading(true);
-      setRecentFilesCurrentPage(page);
-      const pageToken = pageTokens[page - 1];
-      const url = new URL('/api/drive/files', window.location.origin);
-      if (pageToken) url.searchParams.append('pageToken', pageToken);
-      if (recentFilesSearch) url.searchParams.append('q', recentFilesSearch);
+    if (!session) return;
+    
+    setIsRecentFilesLoading(true);
+    setRecentFilesCurrentPage(page);
+    
+    const pageToken = pageTokens[page - 1];
+    const url = new URL('/api/drive/files', window.location.origin);
+    if (pageToken) url.searchParams.append('pageToken', pageToken);
+    if (recentFilesSearch) url.searchParams.append('q', recentFilesSearch);
 
-      fetch(url.toString())
-        .then(res => res.json())
-        .then(data => {
-          const files: DriveFile[] = data.files || [];
-          setRecentFiles(files);
-          setPageTokens(prevTokens => {
-            const newPageTokens = [...prevTokens];
-            if (data.nextPageToken) { newPageTokens[page] = data.nextPageToken; }
-            else { newPageTokens[page] = undefined; }
-            return newPageTokens;
-          });
-        })
-        .catch(error => console.error("Failed to fetch recent files:", error))
-        .finally(() => setIsRecentFilesLoading(false));
-    }
+    fetch(url.toString())
+      .then(res => res.json())
+      .then(data => {
+        const files: DriveFile[] = data.files || [];
+        setRecentFiles(files);
+        
+        setPageTokens(prevTokens => {
+          const newPageTokens = [...prevTokens];
+          if (data.nextPageToken) {
+            newPageTokens[page] = data.nextPageToken;
+          } else {
+            newPageTokens[page] = undefined;
+          }
+          return newPageTokens;
+        });
+      })
+      .catch(error => console.error("Failed to fetch recent files:", error))
+      .finally(() => setIsRecentFilesLoading(false));
   }, [session, pageTokens, recentFilesSearch]);
 
-  const pollIndexStatus = useCallback(() => {
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-    }
-
-    pollingIntervalRef.current = setInterval(async () => {
-      try {
-        const res = await fetch('/api/drive/indexing-status');
-        const data = await res.json();
-
-        if (data.status === 'processing') {
-          const percentage = data.total > 0 ? Math.round((data.progress / data.total) * 100) : 0;
-          setIndexBuildStatus(`Processing file ${data.progress} of ${data.total} (${percentage}%)...`);
-        } else if (data.status === 'complete' || data.status === 'error') {
-          if (pollingIntervalRef.current) {
-            clearInterval(pollingIntervalRef.current);
-          }
-          setIndexBuildStatus(data.message);
-          setIsIndexing(false);
-          fetchRecentFiles(1);
-        }
-      } catch (error) {
-        console.error("Polling error:", error);
-        if (pollingIntervalRef.current) {
-          clearInterval(pollingIntervalRef.current);
-        }
-        setIndexBuildStatus('Error checking progress. Please refresh.');
-        setIsIndexing(false);
-      }
-    }, 3000);
-  }, [fetchRecentFiles]);
-
-
+  // Build the search index with real-time progress
   const handleBuildIndex = async () => {
     setIsIndexing(true);
-    setIndexBuildStatus('Requesting index build...');
+    setIndexBuildStatus('Starting index build...');
+    setIndexProgress(0);
+    
     try {
-      const response = await fetch('/api/drive/build-index', { method: 'POST' });
-      const result = await response.json();
-      if (!response.ok || response.status !== 202) { 
-        throw new Error(result.message || 'Failed to start index process.'); 
+      const response = await fetch('/api/drive/build-index', { 
+        method: 'POST'
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to start index build');
       }
-      pollIndexStatus();
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (!reader) {
+        throw new Error('No response stream available');
+      }
+
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = JSON.parse(line.slice(6));
+            
+            if (data.percentage !== undefined) {
+              setIndexProgress(data.percentage);
+              setIndexBuildStatus(data.message);
+            } else {
+              setIndexBuildStatus(data.message);
+            }
+
+            if (data.status === 'complete') {
+              setIndexProgress(100);
+              setIsIndexing(false);
+              setTimeout(() => {
+                fetchRecentFiles(1);
+              }, 1000);
+            } else if (data.status === 'error') {
+              setIsIndexing(false);
+            }
+          }
+        }
+      }
+      
     } catch (error) {
-      setIndexBuildStatus(error instanceof Error ? error.message : 'An unknown error occurred.');
+      if (error instanceof Error) {
+        setIndexBuildStatus(`Error: ${error.message}`);
+      } else {
+        setIndexBuildStatus('An unknown error occurred.');
+      }
       setIsIndexing(false);
+      setIndexProgress(0);
     }
   };
-  
+
+  // Perform content search
   const performSearch = async (page = 1) => {
     if (!searchQuery) return;
+
     setIsSearching(true);
-    setHasSearched(true); 
+    setHasSearched(true);
     setSearchResults([]);
     setCurrentPage(page);
+
     try {
-        const response = await fetch(`/api/search?q=${encodeURIComponent(searchQuery)}&page=${page}`);
-        const data = await response.json();
-        setSearchResults(data.results || []);
-        setTotalPages(data.totalPages || 0);
+      const response = await fetch(`/api/search?q=${encodeURIComponent(searchQuery)}&page=${page}`);
+      const data = await response.json();
+      setSearchResults(data.results || []);
+      setTotalPages(data.totalPages || 0);
     } catch (error) {
-        console.error('Search failed:', error);
+      console.error('Search failed:', error);
     }
+
     setIsSearching(false);
   };
-  
-  const handleRecentFilesSearchSubmit = (e: FormEvent) => {
+
+  const handleSearchSubmit = () => {
+    performSearch(1);
+  };
+
+  // Handle file list search
+  const handleRecentFilesSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setPageTokens([undefined]);
     fetchRecentFiles(1);
   };
 
-  const handleSearchSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    performSearch(1);
-  };
-
-  const formatFileSize = (bytesStr?: string): string => {
-    if (!bytesStr) return '-';
-    const bytes = Number(bytesStr);
-    if (isNaN(bytes) || bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
+  // ============================================
+  // HAMSTER HANDLERS
+  // ============================================
 
   const handleHamsterClick = () => {
     setIsHamsterVisible(false);
@@ -225,26 +292,29 @@ export default function Home() {
     }, 1000);
   };
 
-  // --- SIDE EFFECTS (HOOKS) ---
+  // ============================================
+  // SIDE EFFECTS
+  // ============================================
 
-  // This hook is for INITIAL data load.
+  // Initial data load when user signs in
   useEffect(() => {
     if (session) {
-      if(pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
       fetchRecentFiles(1);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session]); // This intentionally only depends on `session` to break the loop.
+  }, [session]); // Only run when session changes
 
-  // This hook runs ONLY when the file list is updated.
+  // Check index status when files are loaded
   useEffect(() => {
     if (session && recentFiles.length > 0) {
       checkIndexStatus(recentFiles);
     }
   }, [session, recentFiles, checkIndexStatus]);
 
+  // ============================================
+  // RENDER
+  // ============================================
 
-  // --- RENDER LOGIC ---
   const statusDotColor = {
     checking: 'bg-gray-400',
     uptodate: 'bg-green-500',
@@ -258,25 +328,26 @@ export default function Home() {
         <div className="absolute top-5 right-5 z-20">
           <AuthButton />
         </div>
+
         <div className="text-center w-full max-w-4xl">
           <h1 className="text-4xl font-bold mb-8 flex items-center justify-center gap-4">
-            <div 
+            <div
               className="relative"
               onMouseEnter={() => setShowPatMeBubble(true)}
               onMouseLeave={() => setShowPatMeBubble(false)}
             >
               {showWigglingHamster && (
-                  <div 
-                    onClick={handleWigglingHamsterClick} 
-                    className={`cursor-pointer ${isWigglingHamsterExploding ? 'animate-explode' : ''}`}
-                  >
-                    <Hamster gif="wiggling" size={64} />
-                  </div>
+                <div
+                  onClick={handleWigglingHamsterClick}
+                  className={`cursor-pointer ${isWigglingHamsterExploding ? 'animate-explode' : ''}`}
+                >
+                  <Hamster gif="wiggling" size={64} />
+                </div>
               )}
               {showPatMeBubble && (
-                  <div className="speech-bubble bg-gray-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg">
-                    PAT ME!!!
-                  </div>
+                <div className="speech-bubble bg-gray-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg">
+                  PAT ME!!!
+                </div>
               )}
             </div>
             Welcome to Etrama&apos;s Library
@@ -284,6 +355,7 @@ export default function Home() {
 
           {session ? (
             <>
+              {/* INDEX BUILDING SECTION */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
                 <div className="md:col-span-2 p-4 border border-gray-700 rounded-lg">
                   <button
@@ -293,55 +365,88 @@ export default function Home() {
                   >
                     {isIndexing ? 'Indexing...' : 'Re-Build Search Index'}
                   </button>
-                  <p className="text-sm text-gray-400 mt-2 h-4">{indexBuildStatus}</p>
+                  
+                  {/* Progress Bar */}
+                  {isIndexing && indexProgress > 0 && (
+                    <div className="mt-3">
+                      <div className="w-full bg-gray-700 rounded-full h-2.5">
+                        <div 
+                          className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+                          style={{ width: `${indexProgress}%` }}
+                        ></div>
+                      </div>
+                      <p className="text-xs text-gray-400 mt-1 text-center">{indexProgress}%</p>
+                    </div>
+                  )}
+                  
+                  <p className="text-sm text-gray-400 mt-2">{indexBuildStatus}</p>
                 </div>
                 <div className="p-4 border border-gray-700 rounded-lg flex items-center gap-3">
-                    <span className={`w-4 h-4 rounded-full flex-shrink-0 ${statusDotColor[indexStatusInfo.status]}`}></span>
-                    <p className="text-sm text-gray-300 text-left">{indexStatusInfo.message}</p>
+                  <span className={`w-4 h-4 rounded-full flex-shrink-0 ${statusDotColor[indexStatusInfo.status]}`}></span>
+                  <p className="text-sm text-gray-300 text-left">{indexStatusInfo.message}</p>
                 </div>
               </div>
-              
+
+              {/* SEARCH SECTION */}
               <div className="w-full mb-12">
-                <form onSubmit={handleSearchSubmit}>
-                  <input
-                    type="search"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search for content in your files..."
-                    className="w-full px-4 py-2 text-lg text-white bg-gray-800 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </form>
+                <SearchBar
+                  value={searchQuery}
+                  onChange={setSearchQuery}
+                  onSubmit={handleSearchSubmit}
+                />
+
                 {isSearching && <p className="mt-4">Searching...</p>}
+
                 {hasSearched && !isSearching && searchResults.length === 0 && (
                   <div className="mt-6 text-gray-400">
                     <p>No results found for &quot;{searchQuery}&quot;.</p>
                   </div>
                 )}
+
                 {searchResults.length > 0 && (
                   <div className="mt-6 text-left">
                     <h3 className="text-xl mb-2">Search Results:</h3>
                     <ul className="bg-gray-800 p-4 rounded-md">
                       {searchResults.map((result) => (
-                        <Link href={`/view/${result.id}?page=${result.pageNumber}&query=${encodeURIComponent(searchQuery)}`} key={`${result.id}-${result.pageNumber}`} target="_blank" rel="noopener noreferrer">
+                        <Link 
+                          href={`/view/${result.id}?page=${result.pageNumber}&query=${encodeURIComponent(searchQuery)}`} 
+                          key={`${result.id}-${result.pageNumber}`} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                        >
                           <li className="border-b border-gray-700 py-3 hover:bg-gray-700 transition-colors cursor-pointer">
                             <h4 className="font-bold">📄 {result.name}</h4>
-                            <p 
-                              className="text-sm text-gray-400 mt-1" 
-                              dangerouslySetInnerHTML={{ __html: result.snippet.replace(new RegExp(searchQuery, "gi"), (match) => `<strong class="text-yellow-400">${match}</strong>`) }}
+                            <p
+                              className="text-sm text-gray-400 mt-1"
+                              dangerouslySetInnerHTML={{ 
+                                __html: result.snippet.replace(
+                                  new RegExp(searchQuery, "gi"), 
+                                  (match) => `<strong class="text-yellow-400">${match}</strong>`
+                                ) 
+                              }}
                             ></p>
                           </li>
                         </Link>
                       ))}
                     </ul>
+
                     {totalPages > 1 && (
                       <div className="flex justify-center items-center gap-2 mt-6">
-                        <button onClick={() => performSearch(currentPage - 1)} disabled={currentPage <= 1} className="px-3 py-1 bg-gray-700 rounded disabled:opacity-50">
+                        <button 
+                          onClick={() => performSearch(currentPage - 1)} 
+                          disabled={currentPage <= 1} 
+                          className="px-3 py-1 bg-gray-700 rounded disabled:opacity-50"
+                        >
                           ← Previous
                         </button>
                         <span className="text-gray-400">
                           Page {currentPage} of {totalPages}
                         </span>
-                        <button onClick={() => performSearch(currentPage + 1)} disabled={currentPage >= totalPages} className="px-3 py-1 bg-gray-700 rounded disabled:opacity-50">
+                        <button 
+                          onClick={() => performSearch(currentPage + 1)} 
+                          disabled={currentPage >= totalPages} 
+                          className="px-3 py-1 bg-gray-700 rounded disabled:opacity-50"
+                        >
                           Next →
                         </button>
                       </div>
@@ -350,6 +455,7 @@ export default function Home() {
                 )}
               </div>
 
+              {/* FILE LIST SECTION */}
               <div>
                 <div className="flex justify-between items-center mb-4">
                   <h2 className="text-2xl">Your Google Drive Files:</h2>
@@ -361,10 +467,15 @@ export default function Home() {
                       placeholder="Search files by name..."
                       className="px-3 py-1 text-sm text-white bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
                     />
-                    <button type="submit" className="px-3 py-1 text-sm bg-blue-600 rounded-md hover:bg-blue-700">Search</button>
+                    <button type="submit" className="px-3 py-1 text-sm bg-blue-600 rounded-md hover:bg-blue-700">
+                      Search
+                    </button>
                   </form>
                 </div>
-                {isRecentFilesLoading ? <p>Loading files...</p> : (
+
+                {isRecentFilesLoading ? (
+                  <p>Loading files...</p>
+                ) : (
                   <ul className="text-left bg-gray-800 p-4 rounded-md">
                     {recentFiles.length > 0 ? (
                       recentFiles.map((file) => {
@@ -374,38 +485,54 @@ export default function Home() {
                             <span className="md:col-span-2 truncate font-medium">📄 {file.name}</span>
                             <div className="text-left md:text-right text-sm text-gray-400">
                               <span>{formatFileSize(file.size)}</span>
-                              <span className="ml-4">{file.createdTime ? new Date(file.createdTime).toLocaleDateString() : ''}</span>
+                              <span className="ml-4">
+                                {file.createdTime ? new Date(file.createdTime).toLocaleDateString() : ''}
+                              </span>
                             </div>
                           </div>
                         );
+
                         return (
                           <li key={file.id} className="border-b border-gray-700 last:border-b-0">
                             {isViewableInApp ? (
-                              <Link href={`/view/${file.id}`} target="_blank" rel="noopener noreferrer" className="block py-3 px-2 hover:bg-gray-700 transition-colors">
+                              <Link 
+                                href={`/view/${file.id}`} 
+                                target="_blank" 
+                                rel="noopener noreferrer" 
+                                className="block py-3 px-2 hover:bg-gray-700 transition-colors"
+                              >
                                 {fileContent}
                               </Link>
                             ) : (
-                              <a href={file.webViewLink} target="_blank" rel="noopener noreferrer" className="block py-3 px-2 hover:bg-gray-700 transition-colors">
+                              <a 
+                                href={file.webViewLink} 
+                                target="_blank" 
+                                rel="noopener noreferrer" 
+                                className="block py-3 px-2 hover:bg-gray-700 transition-colors"
+                              >
                                 {fileContent}
                               </a>
                             )}
                           </li>
                         );
                       })
-                    ) : ( <p className="text-center text-gray-400">No files found.</p> )}
+                    ) : (
+                      <p className="text-center text-gray-400">No files found.</p>
+                    )}
                   </ul>
                 )}
+
                 <div className="flex justify-center items-center gap-4 mt-4">
-                  <button 
-                    onClick={() => fetchRecentFiles(recentFilesCurrentPage - 1)} 
-                    disabled={recentFilesCurrentPage <= 1 || isRecentFilesLoading} 
+                  <button
+                    onClick={() => fetchRecentFiles(recentFilesCurrentPage - 1)}
+                    disabled={recentFilesCurrentPage <= 1 || isRecentFilesLoading}
                     className="px-4 py-2 bg-gray-700 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     ← Previous
                   </button>
                   <span className="text-gray-400">Page {recentFilesCurrentPage}</span>
-                  <button 
-                    onClick={() => fetchRecentFiles(recentFilesCurrentPage + 1)} 
+                  <button
+                    onClick={() => fetchRecentFiles(recentFilesCurrentPage + 1)}
                     disabled={isRecentFilesLoading || !pageTokens[recentFilesCurrentPage]}
                     className="px-4 py-2 bg-gray-700 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -415,11 +542,13 @@ export default function Home() {
               </div>
             </>
           ) : (
-             <p>Please sign in to view your files.</p>
+            <p>Please sign in to view your files.</p>
           )}
         </div>
       </main>
-      <div 
+
+      {/* BOTTOM HAMSTERS */}
+      <div
         onClick={handleHamsterClick}
         className={`cursor-pointer fixed bottom-4 z-50 transition-all duration-300 ease-in-out ${
           activeHamster === 'spinning' ? 'left-4' : 'right-4'
@@ -427,14 +556,12 @@ export default function Home() {
           isHamsterVisible ? 'opacity-100 scale-100' : 'opacity-0 scale-50'
         }`}
       >
-        <Hamster 
-          gif={activeHamster}
-          size={80} 
-        />
+        <Hamster gif={activeHamster} size={80} />
       </div>
+
       {showRespawnHamster && (
-        <div 
-          onClick={handleRespawnClick} 
+        <div
+          onClick={handleRespawnClick}
           className={`cursor-pointer absolute bottom-4 z-20 left-1/2 -translate-x-1/2 ${
             isRespawnHamsterSquished ? 'animate-squish-tremor' : ''
           }`}
@@ -445,5 +572,3 @@ export default function Home() {
     </div>
   );
 }
-
- 
